@@ -965,6 +965,9 @@ void MainWindow::closeEvent(QCloseEvent *event)
         event->accept();
         return;
     }
+    // Close always means quit — never hide-to-tray. When the tray is a stub
+    // (Linux) or unavailable, swallowing a dismiss looks like the first close
+    // was ignored; route straight to save+quit instead.
     event->ignore();
     quitApplication();
 }
@@ -1352,7 +1355,15 @@ void MainWindow::updateTrayState()
     if (m_trayShowAction)
         m_trayShowAction->setEnabled(!isVisible() || isMinimized());
     if (m_trayHideAction)
-        m_trayHideAction->setEnabled(isVisible() && !isMinimized());
+        m_trayHideAction->setEnabled(isVisible() && !isMinimized() && WinUtils::trayAvailable());
+    if (m_hideButton) {
+        if (WinUtils::trayAvailable()) {
+            m_hideButton->setToolTip(QStringLiteral("隐藏到托盘（程序继续运行）"));
+        } else {
+            // Linux stub / no tray: hide routes to save+quit.
+            m_hideButton->setToolTip(QStringLiteral("系统托盘不可用：将保存并退出"));
+        }
+    }
     if (m_trayAutoStartAction) {
         QSignalBlocker blocker(m_trayAutoStartAction);
         m_trayAutoStartAction->setChecked(m_store && m_store->settings().autoStart);
@@ -2002,9 +2013,16 @@ void MainWindow::minimizeToTray()
 
 void MainWindow::hideToTray()
 {
+    if (!WinUtils::trayAvailable()) {
+        // No system tray (Linux stub / explorer down): cannot recover from a
+        // background hide. Treat as save+quit so the first dismiss exits.
+        quitApplication();
+        return;
+    }
     if (!m_trayInstalled)
         m_trayInstalled = WinUtils::installTrayIcon(this, trayImage(), trayTipText());
-    if (!m_trayInstalled || !WinUtils::trayAvailable()) {
+    if (!m_trayInstalled) {
+        // Tray shell exists but icon install failed (e.g. low integrity on Win).
         showToast(QStringLiteral("系统托盘不可用，便签将保持显示。"));
         return;
     }
@@ -2049,6 +2067,9 @@ void MainWindow::finishQuit()
     }
     WinUtils::removeTrayIcon(this);
     m_trayInstalled = false;
+    // Hide before quit so platforms with QuitOnLastWindowClosed=false still
+    // drop the visible tool window in the same click that requested exit.
+    hide();
     qApp->quit();
 }
 
