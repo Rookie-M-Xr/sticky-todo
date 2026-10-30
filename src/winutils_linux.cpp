@@ -9,6 +9,9 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QSaveFile>
+#include <QStandardPaths>
 #include <QIODevice>
 #include <QLockFile>
 #include <QStringList>
@@ -16,6 +19,8 @@
 #include <QWindow>
 
 #include <dlfcn.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <memory>
 #include <vector>
 
@@ -79,6 +84,97 @@ void applyCommandLineDataDir()
     if (start < raw.size())
         args.append(QString::fromLocal8Bit(raw.constData() + start, raw.size() - start));
     applyDataDirFromArgs(args);
+}
+
+
+bool directoryLooksWritable(const QString &dir)
+{
+    if (dir.trimmed().isEmpty())
+        return false;
+    if (!QDir().mkpath(dir))
+        return false;
+    const QString probe = QDir(dir).filePath(QStringLiteral(".sticky-todo-write-probe"));
+    QSaveFile file(probe);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return false;
+    const QByteArray marker = QByteArrayLiteral("sticky-todo-write-probe");
+    if (file.write(marker) != marker.size())
+        return false;
+    if (!file.commit())
+        return false;
+    QFile::remove(probe);
+    return true;
+}
+
+bool tryClearDirectoryReadOnly(const QString &dir)
+{
+    if (dir.trimmed().isEmpty())
+        return false;
+    bool touched = false;
+    const QByteArray path = QFile::encodeName(dir);
+    struct stat st;
+    if (::stat(path.constData(), &st) == 0) {
+        const mode_t next = st.st_mode | S_IWUSR;
+        if (next != st.st_mode && ::chmod(path.constData(), next) == 0)
+            touched = true;
+    }
+    const QFileInfoList entries = QDir(dir).entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
+    for (const QFileInfo &fi : entries) {
+        const QByteArray fp = QFile::encodeName(fi.absoluteFilePath());
+        if (::stat(fp.constData(), &st) != 0)
+            continue;
+        const mode_t next = st.st_mode | S_IWUSR;
+        if (next != st.st_mode && ::chmod(fp.constData(), next) == 0)
+            touched = true;
+    }
+    return touched;
+}
+
+bool ensureDirectoryWritable(const QString &dir)
+{
+    if (directoryLooksWritable(dir))
+        return true;
+    tryClearDirectoryReadOnly(dir);
+    return directoryLooksWritable(dir);
+}
+
+QString stickyTodoLocalDataDir()
+{
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    if (base.isEmpty())
+        return QDir::home().filePath(QStringLiteral(".local/share/StickyTodo/data"));
+    return QDir(base).filePath(QStringLiteral("StickyTodo/data"));
+}
+
+int migrateDataFiles(const QString &srcDir, const QString &dstDir)
+{
+    if (srcDir.isEmpty() || dstDir.isEmpty())
+        return 0;
+    if (QDir::cleanPath(srcDir) == QDir::cleanPath(dstDir))
+        return 0;
+    if (!QDir().mkpath(dstDir))
+        return 0;
+
+    static const char *const kNames[] = {
+        "todos.json",
+        "todos.json.bak",
+        "settings.json",
+        "settings.json.bak",
+        "todos-archive.json",
+        "daily-reports.json",
+        "weekly-reports.json",
+        "monthly-reports.json",
+    };
+    int copied = 0;
+    for (const char *name : kNames) {
+        const QString src = QDir(srcDir).filePath(QString::fromUtf8(name));
+        const QString dst = QDir(dstDir).filePath(QString::fromUtf8(name));
+        if (!QFileInfo::exists(src) || QFileInfo::exists(dst))
+            continue;
+        if (QFile::copy(src, dst))
+            ++copied;
+    }
+    return copied;
 }
 
 bool handoffIfLowIntegrity()

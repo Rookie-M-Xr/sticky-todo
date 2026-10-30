@@ -11,7 +11,8 @@ int main(int argc, char *argv[])
 
     // Low-integrity launch (common when the package folder is labeled Low):
     // hand off to %LOCALAPPDATA%\StickyTodo\runtime at medium IL so the tray
-    // works; keep --data-dir on the original package config.
+    // works; --data-dir stays on package config when writable, else
+    // %LOCALAPPDATA%\StickyTodo\data (TR #16).
     if (WinUtils::handoffIfLowIntegrity())
         return 0;
 

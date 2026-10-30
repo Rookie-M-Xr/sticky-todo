@@ -14,9 +14,22 @@ unsigned int activationMessage();
 
 void applyCommandLineDataDir();
 
+// Probe: mkpath + real write of a throwaway file, then delete.
+bool directoryLooksWritable(const QString &dir);
+// Windows: clear FILE_ATTRIBUTE_READONLY on dir + immediate files.
+// Linux: chmod u+w on dir when needed.
+bool tryClearDirectoryReadOnly(const QString &dir);
+// mkpath + probe; if fail, tryClearDirectoryReadOnly then probe again.
+bool ensureDirectoryWritable(const QString &dir);
+// %LOCALAPPDATA%\StickyTodo\data (Win) or $XDG_DATA_HOME/StickyTodo/data (Linux).
+QString stickyTodoLocalDataDir();
+// Copy known JSON (+ .bak) from srcDir into dstDir when dest file is missing.
+int migrateDataFiles(const QString &srcDir, const QString &dstDir);
+
 // Low IL (e.g. exe under a Low-labeled folder): copy+relaunch via
-// %LOCALAPPDATA%\\StickyTodo\\runtime at medium integrity (same idea as
+// %LOCALAPPDATA%\StickyTodo\runtime at medium integrity (same idea as
 // Start StickyTodo.cmd). Returns true if this process should exit now.
+// When package config is not writable, --data-dir uses stickyTodoLocalDataDir().
 bool handoffIfLowIntegrity();
 
 bool setAutoStart(bool enabled, QString *errorMessage, const QString &dataDir = QString());

@@ -1,4 +1,5 @@
 #include "datastore.h"
+#include "winutils.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -58,8 +59,8 @@ QString DataStore::resolveDataDir() const
     if (!overrideDir.isEmpty())
         return QDir::cleanPath(overrideDir);
 
-    // 绿色便携版：数据跟随 exe 放置，绝不固定写入 C 盘用户目录。
-    // config 目录和 exe 同级，可随整个程序目录一起复制/备份/删除。
+    // 绿色便携版：数据跟随 exe 放置（config 与 exe 同级）。
+    // TR #16：若便携 config 不可写，load() 会回退到 LocalAppData\StickyTodo\data。
     QString base = QCoreApplication::applicationDirPath();
     if (base.isEmpty())
         base = QDir::currentPath();
@@ -98,7 +99,49 @@ QString DataStore::monthlyReportsPath() const
 
 bool DataStore::load()
 {
-    m_dataDir = resolveDataDir();
+    const QString overrideDir = qEnvironmentVariable("STICKY_TODO_DATA_DIR").trimmed();
+    const QString portable = [&]() {
+        QString base = QCoreApplication::applicationDirPath();
+        if (base.isEmpty())
+            base = QDir::currentPath();
+        return QDir(base).filePath(QStringLiteral("config"));
+    }();
+
+    if (!overrideDir.isEmpty()) {
+        // Explicit --data-dir / env: honor it (handoff may already have picked fallback).
+        m_dataDir = QDir::cleanPath(overrideDir);
+        if (!WinUtils::ensureDirectoryWritable(m_dataDir)) {
+            const QString message = QStringLiteral("数据目录不可写：%1")
+                                        .arg(QDir::toNativeSeparators(m_dataDir));
+            addNotice(message);
+            emit errorOccurred(message);
+            // Still attempt load/read; writes will surface via save errors.
+        }
+    } else if (WinUtils::ensureDirectoryWritable(portable)) {
+        m_dataDir = portable;
+    } else {
+        const QString fallback = WinUtils::stickyTodoLocalDataDir();
+        if (fallback.isEmpty() || !WinUtils::ensureDirectoryWritable(fallback)) {
+            m_dataDir = portable;
+            const QString message = QStringLiteral(
+                "便携 config 不可写（%1），且无法回退到用户目录。请换到有写权限的位置解压。")
+                                        .arg(QDir::toNativeSeparators(portable));
+            addNotice(message);
+            emit errorOccurred(message);
+            return false;
+        }
+        const int migrated = WinUtils::migrateDataFiles(portable, fallback);
+        m_dataDir = fallback;
+        // Keep subsequent saves / autostart on the writable path for this process.
+        qputenv("STICKY_TODO_DATA_DIR", QDir::toNativeSeparators(fallback).toUtf8());
+        QString message = QStringLiteral("便携 config 不可写（%1），已改用 %2")
+                              .arg(QDir::toNativeSeparators(portable),
+                                   QDir::toNativeSeparators(fallback));
+        if (migrated > 0)
+            message += QStringLiteral("（已迁移 %1 个数据文件）").arg(migrated);
+        addNotice(message);
+    }
+
     if (!QDir().mkpath(m_dataDir)) {
         const QString message = QStringLiteral("无法创建数据目录：%1").arg(QDir::toNativeSeparators(m_dataDir));
         addNotice(message);

@@ -53,14 +53,16 @@ python .\test_datastore.py
 
 ## 运行调试
 
-日常**一般直接双击** `dist\StickyTodo.exe` 即可。若工程/`dist` 目录带 Low integrity 标签，进程会先自愈：拷贝到 `%LOCALAPPDATA%\StickyTodo\runtime`（中等完整性）并以 `--data-dir <本包>\config` 重启，托盘可用。`Start StickyTodo.cmd` 仍可用作解除 Internet 标记或自愈未生效时的兜底，**不是**必经步骤。
+日常**一般直接双击** `dist\StickyTodo.exe` 即可。若工程/`dist` 目录带 Low integrity 标签，进程会先自愈：拷贝到 `%LOCALAPPDATA%\StickyTodo\runtime`（中等完整性）并以 `--data-dir` 指向可写数据目录重启，托盘可用。`Start StickyTodo.cmd` 仍可用作解除 Internet 标记或自愈未生效时的兜底，**不是**必经步骤。
+
+请解压到有写权限的目录（勿装到 Program Files 等无写位置）；若便携 `config` 不可写，程序会回退到 `%LOCALAPPDATA%\StickyTodo\data` 并提示新旧路径。
 
 数据目录解析顺序：
 
 1. 命令行 `--data-dir` / 环境变量 `STICKY_TODO_DATA_DIR`
-2. 否则使用 **当前 exe 同级** 的 `config`（便携默认）
+2. 否则使用 **当前 exe 同级** 的 `config`（便携默认）；不可写时尝试去掉目录只读属性，仍失败则回退 `%LOCALAPPDATA%\StickyTodo\data`（可迁移已有 JSON）
 
-自愈与 `Start StickyTodo.cmd` 都会把数据钉在本包 `config`，避免 LocalAppData runtime 与绿色版各写一份。开机自启项写入「当前会话解析到的数据目录」；**不会**把位于 `%TEMP%` 的测试目录写进启动项。
+自愈 handoff 在包内 `config` 可写时仍钉本包 `config`；不可写时 `--data-dir` 同步改用上述回退目录。开机自启项写入「当前会话解析到的数据目录」；**不会**把位于 `%TEMP%` 的测试目录写进启动项。
 
 隔离测试：
 
@@ -139,7 +141,7 @@ $env:STICKY_TODO_DATA_DIR = "$PWD\testdata"
 - 命名 Mutex 单实例、广播消息恢复已有窗口。
 - HKCU Run 开机自启、系统托盘、明确的最小化/隐藏/退出语义。
 - JSON + QSaveFile 原子写入、`.bak` 备份、损坏文件保留。
-- 便携数据目录：程序同级 `config`，不写固定 C 盘路径。
+- 便携数据目录：优先程序同级 `config`；不可写时回退 `%LOCALAPPDATA%\StickyTodo\data`（TR #16）。
 - 6 个 Q_OBJECT 头文件必须全部 moc，否则会出现 `undefined reference to ...` 链接错误。
 
 ## Linux 可搬运包（TR #5）

@@ -2347,8 +2347,9 @@ void MainWindow::quitApplication()
         box.setMinimumWidth(430);
         box.setText(QStringLiteral("待办或设置未能保存。"));
         box.setInformativeText(
-            QStringLiteral("程序同级的 config 目录不可写，或磁盘空间不足。\n"
-                           "可以修复目录权限后重试；现在退出会丢失本次未保存的修改。"));
+            QStringLiteral("当前数据目录不可写（%1），或磁盘空间不足。\n"
+                           "可以修复目录权限后重试；现在退出会丢失本次未保存的修改。")
+                .arg(QDir::toNativeSeparators(m_store->dataDir())));
         QPushButton *retry = box.addButton(QStringLiteral("重试"), QMessageBox::AcceptRole);
         QPushButton *discard =
             box.addButton(QStringLiteral("放弃更改并退出"), QMessageBox::DestructiveRole);

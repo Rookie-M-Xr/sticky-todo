@@ -631,6 +631,85 @@ void suppressSystemFrame(QWidget *window)
     DwmSetWindowAttribute(hwnd, 35, &none, sizeof(none));
 }
 
+bool directoryLooksWritable(const QString &dir)
+{
+    if (dir.trimmed().isEmpty())
+        return false;
+    if (!QDir().mkpath(dir))
+        return false;
+    const QString probe = QDir(dir).filePath(QStringLiteral(".sticky-todo-write-probe"));
+    return probeWritableFile(probe);
+}
+
+bool tryClearDirectoryReadOnly(const QString &dir)
+{
+    if (dir.trimmed().isEmpty())
+        return false;
+    bool touched = false;
+    const std::wstring wdir = QDir::toNativeSeparators(dir).toStdWString();
+    const DWORD attrs = GetFileAttributesW(wdir.c_str());
+    if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_READONLY)) {
+        if (SetFileAttributesW(wdir.c_str(), attrs & ~FILE_ATTRIBUTE_READONLY))
+            touched = true;
+    }
+    const QFileInfoList entries = QDir(dir).entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
+    for (const QFileInfo &fi : entries) {
+        const std::wstring wfile = QDir::toNativeSeparators(fi.absoluteFilePath()).toStdWString();
+        const DWORD a = GetFileAttributesW(wfile.c_str());
+        if (a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_READONLY)) {
+            if (SetFileAttributesW(wfile.c_str(), a & ~FILE_ATTRIBUTE_READONLY))
+                touched = true;
+        }
+    }
+    return touched || attrs != INVALID_FILE_ATTRIBUTES;
+}
+
+bool ensureDirectoryWritable(const QString &dir)
+{
+    if (directoryLooksWritable(dir))
+        return true;
+    tryClearDirectoryReadOnly(dir);
+    return directoryLooksWritable(dir);
+}
+
+QString stickyTodoLocalDataDir()
+{
+    const QString localApp = qEnvironmentVariable("LOCALAPPDATA").trimmed();
+    if (!localApp.isEmpty())
+        return QDir(localApp).filePath(QStringLiteral("StickyTodo/data"));
+    return {};
+}
+
+int migrateDataFiles(const QString &srcDir, const QString &dstDir)
+{
+    if (srcDir.isEmpty() || dstDir.isEmpty())
+        return 0;
+    if (QDir::cleanPath(srcDir).compare(QDir::cleanPath(dstDir), Qt::CaseInsensitive) == 0)
+        return 0;
+    if (!QDir().mkpath(dstDir))
+        return 0;
+
+    static const char *const kNames[] = {
+        "todos.json",
+        "todos.json.bak",
+        "settings.json",
+        "settings.json.bak",
+        "todos-archive.json",
+        "daily-reports.json",
+        "weekly-reports.json",
+        "monthly-reports.json",
+    };
+    int copied = 0;
+    for (const char *name : kNames) {
+        const QString src = QDir(srcDir).filePath(QString::fromUtf8(name));
+        const QString dst = QDir(dstDir).filePath(QString::fromUtf8(name));
+        if (!QFileInfo::exists(src) || QFileInfo::exists(dst))
+            continue;
+        if (QFile::copy(src, dst))
+            ++copied;
+    }
+    return copied;
+}
 void applyCommandLineDataDir()
 {
     applyDataDirFromCommandLine();
@@ -657,6 +736,16 @@ bool handoffIfLowIntegrity()
     QString dataDir = qEnvironmentVariable("STICKY_TODO_DATA_DIR").trimmed();
     if (dataDir.isEmpty())
         dataDir = QDir(exeDir).filePath(QStringLiteral("config"));
+
+    // TR #16: if package config is RO / unwritable, handoff must not pin
+    // --data-dir there — use LocalAppData\StickyTodo\data and migrate JSON.
+    if (!ensureDirectoryWritable(dataDir)) {
+        const QString fallback = stickyTodoLocalDataDir();
+        if (ensureDirectoryWritable(fallback)) {
+            migrateDataFiles(dataDir, fallback);
+            dataDir = fallback;
+        }
+    }
 
     // Prefer exe-sibling, then %LOCALAPPDATA%\Temp, then GetTempPath — Low
     // cannot write medium TEMP, so each candidate is probed with a real write.
