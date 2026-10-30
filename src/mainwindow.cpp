@@ -1160,8 +1160,8 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         {
             const QPoint center = target + QPoint(width() / 2, height() / 2);
             if (!QGuiApplication::screenAt(center)) {
-                if (QScreen *near = nearestScreen(center)) {
-                    const QRect a = near->availableGeometry();
+                if (QScreen *nearestScr = nearestScreen(center)) {
+                    const QRect a = nearestScr->availableGeometry();
                     QPoint c = center;
                     c.setX(qBound(a.left(), c.x(), a.right()));
                     c.setY(qBound(a.top(), c.y(), a.bottom()));
