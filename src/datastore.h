@@ -26,6 +26,8 @@ struct AppSettings {
     QString screenName;
     QString draft;
     QDate draftDue;
+    // Empty = off. Normalized form e.g. "Ctrl+Alt+T".
+    QString globalHotkey;
     QHash<QString, bool> groupExpanded;
 };
 
@@ -116,6 +118,7 @@ public:
     void setDockSide(int side);
     void setCollapsed(bool collapsed);
     void setPinned(bool pinned);
+    void setGlobalHotkey(const QString &hotkey);
     void setWindowState(const QRect &rect, const QString &screenName, int dockSide,
                         bool collapsed, bool pinned);
 

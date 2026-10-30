@@ -2,7 +2,10 @@
 
 #include <QWidget>
 
+#include <QString>
+
 class DataStore;
+class QEvent;
 class QLabel;
 class QPushButton;
 class QScrollArea;
@@ -19,8 +22,12 @@ public:
     explicit SettingsPage(DataStore *store, QWidget *parent = nullptr);
     void refresh();
 
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 signals:
     void autoStartRequested(bool enabled);
+    void hotkeyChangeRequested(const QString &normalized);
     void dockRequested(int side);
     void collapseRequested();
     void resetWindowRequested();
@@ -42,6 +49,9 @@ private:
     SwitchButton *m_topSwitch = nullptr;
     SwitchButton *m_autoHideSwitch = nullptr;
     SwitchButton *m_autoStartSwitch = nullptr;
+    QPushButton *m_hotkeyButton = nullptr;
+    TextAction *m_hotkeyClearAction = nullptr;
+    bool m_capturingHotkey = false;
     SwitchButton *m_dailyReportSwitch = nullptr;
     SwitchButton *m_weeklyReportSwitch = nullptr;
     SwitchButton *m_monthlyReportSwitch = nullptr;

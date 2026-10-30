@@ -111,6 +111,8 @@ private:
     void showAndActivate();
     void minimizeToTray();
     void hideToTray();
+    void toggleByHotkey();
+    void applyGlobalHotkey(bool quiet);
     void quitApplication();
     void finishQuit();
     void showToast(const QString &message, const QString &actionText = QString(),

@@ -3,12 +3,14 @@
 #include "datastore.h"
 #include "theme.h"
 #include "widgets.h"
+#include "winutils.h"
 
 #include <QButtonGroup>
 #include <QDir>
 #include <QFontMetrics>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QPainter>
 #include <QPushButton>
@@ -258,6 +260,46 @@ QWidget *SettingsPage::buildGeneralCard()
     connect(m_autoStartSwitch, &QAbstractButton::clicked, this, [this](bool on) {
         if (!m_syncing)
             emit autoStartRequested(on);
+    });
+
+    body->addWidget(new Separator(card));
+
+    auto *hotkeyBox = new QWidget(card);
+    auto *hotkeyLayout = new QHBoxLayout(hotkeyBox);
+    hotkeyLayout->setContentsMargins(0, 0, 0, 0);
+    hotkeyLayout->setSpacing(6);
+
+    m_hotkeyButton = new QPushButton(QStringLiteral("未设置"), hotkeyBox);
+    m_hotkeyButton->setCursor(Qt::PointingHandCursor);
+    m_hotkeyButton->setFocusPolicy(Qt::StrongFocus);
+    m_hotkeyButton->setMinimumWidth(110);
+    m_hotkeyButton->setStyleSheet(QStringLiteral(
+        "QPushButton { border: 1px solid rgba(169,154,120,0.58); border-radius: 8px; "
+        "background: rgba(255,255,255,0.35); color: #4f4a3d; padding: 3px 8px; min-height: 24px; "
+        "font-size: 11px; }"
+        "QPushButton:hover { background: rgba(255,255,255,0.55); }"));
+    m_hotkeyButton->setToolTip(QStringLiteral("点击后按下组合键；Esc 取消。失焦时仍可唤出/隐藏便签。"));
+    m_hotkeyButton->installEventFilter(this);
+    hotkeyLayout->addWidget(m_hotkeyButton);
+
+    m_hotkeyClearAction = new TextAction(QStringLiteral("清除"), hotkeyBox);
+    m_hotkeyClearAction->setColors(Theme::InkSoft, Theme::Ink);
+    m_hotkeyClearAction->setFont(Theme::uiFont(11));
+    m_hotkeyClearAction->setToolTip(QStringLiteral("关闭全局快捷键"));
+    hotkeyLayout->addWidget(m_hotkeyClearAction);
+
+    auto *hotkeyRow = new SettingRow(QStringLiteral("全局快捷键"),
+                                     QStringLiteral("显示/隐藏便签（有托盘时隐藏进托盘）"),
+                                     hotkeyBox, card);
+    body->addWidget(hotkeyRow);
+    connect(m_hotkeyButton, &QPushButton::clicked, this, [this] {
+        m_capturingHotkey = true;
+        m_hotkeyButton->setText(QStringLiteral("按下组合键…"));
+        m_hotkeyButton->setFocus(Qt::OtherFocusReason);
+    });
+    connect(m_hotkeyClearAction, &QAbstractButton::clicked, this, [this] {
+        m_capturingHotkey = false;
+        emit hotkeyChangeRequested(QString());
     });
     return card;
 }
@@ -567,7 +609,7 @@ QWidget *SettingsPage::buildAboutCard()
     desc->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(Theme::Muted.name()));
     layout->addWidget(desc);
 
-    auto *shortcuts = new QLabel(QStringLiteral("快捷键  Ctrl+N 新建 · Ctrl+F 搜索 · Esc 关闭浮层"), content);
+    auto *shortcuts = new QLabel(QStringLiteral("快捷键  Ctrl+N 新建 · Ctrl+F 搜索 · Esc 关闭浮层 · 全局热键见设置"), content);
     shortcuts->setFont(Theme::uiFont(9));
     shortcuts->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(Theme::Faint.name()));
     shortcuts->setWordWrap(true);
@@ -592,6 +634,12 @@ void SettingsPage::refresh()
     m_topSwitch->setChecked(settings.alwaysOnTop);
     m_autoHideSwitch->setChecked(settings.autoHide);
     m_autoStartSwitch->setChecked(settings.autoStart);
+    if (m_hotkeyButton && !m_capturingHotkey) {
+        const QString hk = settings.globalHotkey.trimmed();
+        m_hotkeyButton->setText(hk.isEmpty() ? QStringLiteral("未设置") : hk);
+    }
+    if (m_hotkeyClearAction)
+        m_hotkeyClearAction->setEnabled(!settings.globalHotkey.trimmed().isEmpty());
     if (m_dailyReportSwitch)
         m_dailyReportSwitch->setChecked(settings.showDailyReport);
     if (m_weeklyReportSwitch)
@@ -611,4 +659,65 @@ void SettingsPage::refresh()
     m_collapseAction->setText(settings.collapsed ? QStringLiteral("展开便签")
                                                  : QStringLiteral("现在收起"));
     m_syncing = false;
+}
+
+bool SettingsPage::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_hotkeyButton && m_capturingHotkey && event) {
+        if (event->type() == QEvent::KeyPress) {
+            auto *key = static_cast<QKeyEvent *>(event);
+            if (key->key() == Qt::Key_Escape) {
+                m_capturingHotkey = false;
+                refresh();
+                return true;
+            }
+            const Qt::KeyboardModifiers mods = key->modifiers()
+                & (Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier | Qt::MetaModifier);
+            const int k = key->key();
+            if (k == Qt::Key_Control || k == Qt::Key_Shift || k == Qt::Key_Alt || k == Qt::Key_Meta
+                || k == Qt::Key_unknown) {
+                return true;
+            }
+            if (mods == Qt::NoModifier) {
+                emit messageRequested(QStringLiteral("请带修饰键，例如 Ctrl+Alt+T"));
+                return true;
+            }
+            QStringList parts;
+            if (mods & Qt::ControlModifier)
+                parts.append(QStringLiteral("Ctrl"));
+            if (mods & Qt::AltModifier)
+                parts.append(QStringLiteral("Alt"));
+            if (mods & Qt::ShiftModifier)
+                parts.append(QStringLiteral("Shift"));
+            if (mods & Qt::MetaModifier)
+                parts.append(QStringLiteral("Win"));
+            QString keyName;
+            if (k >= Qt::Key_A && k <= Qt::Key_Z)
+                keyName = QChar(QLatin1Char('A' + (k - Qt::Key_A)));
+            else if (k >= Qt::Key_0 && k <= Qt::Key_9)
+                keyName = QChar(QLatin1Char('0' + (k - Qt::Key_0)));
+            else if (k >= Qt::Key_F1 && k <= Qt::Key_F12)
+                keyName = QStringLiteral("F%1").arg(k - Qt::Key_F1 + 1);
+            else {
+                emit messageRequested(QStringLiteral("仅支持字母、数字或 F1–F12"));
+                return true;
+            }
+            parts.append(keyName);
+            const QString raw = parts.join(QLatin1Char('+'));
+            const QString normalized = WinUtils::normalizeGlobalHotkey(raw);
+            m_capturingHotkey = false;
+            if (normalized.isEmpty()) {
+                emit messageRequested(QStringLiteral("快捷键无效"));
+                refresh();
+                return true;
+            }
+            emit hotkeyChangeRequested(normalized);
+            return true;
+        }
+        if (event->type() == QEvent::FocusOut) {
+            m_capturingHotkey = false;
+            refresh();
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }

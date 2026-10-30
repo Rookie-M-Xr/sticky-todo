@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArray>
 #include <QImage>
 #include <QString>
 
@@ -33,5 +34,13 @@ QString lastTrayError();
 void clearDownloadedFileMarks();
 
 QString windowsErrorText(unsigned long code);
+
+// Global toggle hotkey (show/focus or hide). Sequence text uses Qt-ish form,
+// e.g. "Ctrl+Alt+T". Empty clears. Win: RegisterHotKey; Linux: X11 grab (Wayland no).
+bool globalHotkeySupported(QString *reason = nullptr);
+QString normalizeGlobalHotkey(const QString &text);
+bool setGlobalHotkey(QWidget *owner, const QString &normalized, QString *error = nullptr);
+void clearGlobalHotkey();
+bool isGlobalHotkeyEvent(const QByteArray &eventType, void *message);
 
 } // namespace WinUtils

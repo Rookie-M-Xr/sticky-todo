@@ -342,6 +342,11 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(m_settingsPage, &SettingsPage::autoStartRequested, this,
             [this](bool on) { applyAutoStart(on, false); });
+    connect(m_settingsPage, &SettingsPage::hotkeyChangeRequested, this,
+            [this](const QString &normalized) {
+                m_store->setGlobalHotkey(normalized);
+                applyGlobalHotkey(false);
+            });
     connect(m_settingsPage, &SettingsPage::dockRequested, this, &MainWindow::handleDockRequest);
     connect(m_settingsPage, &SettingsPage::collapseRequested, this,
             &MainWindow::handleCollapseAction);
@@ -403,11 +408,13 @@ MainWindow::MainWindow(QWidget *parent)
         const AppSettings &settings = m_store->settings();
         applyAutoStart(settings.autoStart, true);
         applyTopMost();
+        applyGlobalHotkey(true);
     });
 }
 
 MainWindow::~MainWindow()
 {
+    WinUtils::clearGlobalHotkey();
     if (qApp)
         qApp->removeEventFilter(this);
     qApp->removeNativeEventFilter(this);
@@ -1316,6 +1323,12 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 
 bool MainWindow::nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result)
 {
+    if (WinUtils::isGlobalHotkeyEvent(eventType, message)) {
+        toggleByHotkey();
+        if (result)
+            *result = 0;
+        return true;
+    }
 #ifndef Q_OS_WIN
     Q_UNUSED(eventType);
     Q_UNUSED(message);
@@ -2197,11 +2210,74 @@ void MainWindow::hideToTray()
     }
 }
 
+void MainWindow::toggleByHotkey()
+{
+    // Visible + active → hide; otherwise show/focus (including collapsed tab).
+    const bool shouldHide = isVisible() && !isMinimized() && isActiveWindow() && !m_collapsed;
+    if (!shouldHide) {
+        showAndActivate();
+        return;
+    }
+    if (WinUtils::trayAvailable()) {
+        hideToTray();
+        return;
+    }
+    // No tray (Linux stub): hotkey is the recovery path — hide without quitting.
+    // (Tray hide path still quits when tray is unavailable; quit path unchanged.)
+    if (!m_store->flush()) {
+        showAndActivate();
+        showToast(QStringLiteral("数据未能保存，已取消隐藏。"), QString(), {}, 8000);
+        return;
+    }
+    if (m_calendar) {
+        CalendarPopup *calendar = m_calendar;
+        m_calendar = nullptr;
+        calendar->hide();
+        calendar->deleteLater();
+    }
+    stopCollapseCountdown();
+    if (m_hoverTimer)
+        m_hoverTimer->stop();
+    hide();
+    updateTrayState();
+}
+
+void MainWindow::applyGlobalHotkey(bool quiet)
+{
+    if (!m_store)
+        return;
+    const QString raw = m_store->settings().globalHotkey;
+    const QString normalized = WinUtils::normalizeGlobalHotkey(raw);
+    if (!raw.trimmed().isEmpty() && normalized.isEmpty()) {
+        if (!quiet)
+            showToast(QStringLiteral("快捷键无效，已清除"));
+        m_store->setGlobalHotkey(QString());
+        WinUtils::clearGlobalHotkey();
+        return;
+    }
+    if (normalized != raw && !raw.trimmed().isEmpty())
+        m_store->setGlobalHotkey(normalized);
+
+    QString error;
+    if (!WinUtils::setGlobalHotkey(this, normalized, &error)) {
+        if (!quiet)
+            showToast(error.isEmpty() ? QStringLiteral("全局热键注册失败") : error, QString(), {}, 7000);
+        // Keep the preference so user can retry / see it in settings; just unregister.
+        WinUtils::clearGlobalHotkey();
+        return;
+    }
+    if (!quiet && !normalized.isEmpty())
+        showToast(QStringLiteral("全局热键已设为 %1").arg(normalized));
+    else if (!quiet && normalized.isEmpty())
+        showToast(QStringLiteral("已关闭全局热键"));
+}
+
 void MainWindow::finishQuit()
 {
     if (m_quitting)
         return;
     m_quitting = true;
+    WinUtils::clearGlobalHotkey();
     stopCollapseCountdown();
     if (m_hoverTimer)
         m_hoverTimer->stop();

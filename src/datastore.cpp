@@ -671,6 +671,16 @@ void DataStore::setPinned(bool pinned)
     emit settingsChanged();
 }
 
+void DataStore::setGlobalHotkey(const QString &hotkey)
+{
+    const QString next = hotkey.trimmed();
+    if (m_settings.globalHotkey == next)
+        return;
+    m_settings.globalHotkey = next;
+    scheduleSettingsSave(0);
+    emit settingsChanged();
+}
+
 void DataStore::setWindowState(const QRect &rect, const QString &screenName, int dockSide,
                                bool collapsed, bool pinned)
 {
@@ -754,6 +764,7 @@ void DataStore::saveSettingsNow()
     root.insert(QStringLiteral("showWeeklyReport"), m_settings.showWeeklyReport);
     root.insert(QStringLiteral("showMonthlyReport"), m_settings.showMonthlyReport);
     root.insert(QStringLiteral("draft"), m_settings.draft);
+    root.insert(QStringLiteral("globalHotkey"), m_settings.globalHotkey);
     root.insert(QStringLiteral("draftDue"),
                 m_settings.draftDue.isValid() ? m_settings.draftDue.toString(Qt::ISODate) : QString());
 
@@ -948,6 +959,7 @@ void DataStore::loadSettings()
         settings->showWeeklyReport = root.value(QStringLiteral("showWeeklyReport")).toBool(true);
         settings->showMonthlyReport = root.value(QStringLiteral("showMonthlyReport")).toBool(true);
         settings->draft = root.value(QStringLiteral("draft")).toString().left(1000);
+        settings->globalHotkey = root.value(QStringLiteral("globalHotkey")).toString().trimmed();
         const QString dueText = root.value(QStringLiteral("draftDue")).toString();
         settings->draftDue = QDate::fromString(dueText, Qt::ISODate);
         if (!settings->draftDue.isValid())
@@ -1077,6 +1089,7 @@ bool DataStore::reloadSettingsBackup(QString *warning)
     fallback.showWeeklyReport = root.value(QStringLiteral("showWeeklyReport")).toBool(true);
     fallback.showMonthlyReport = root.value(QStringLiteral("showMonthlyReport")).toBool(true);
     fallback.draft = root.value(QStringLiteral("draft")).toString().left(1000);
+    fallback.globalHotkey = root.value(QStringLiteral("globalHotkey")).toString().trimmed();
     fallback.draftDue = QDate::fromString(root.value(QStringLiteral("draftDue")).toString(), Qt::ISODate);
     if (!fallback.draftDue.isValid())
         fallback.draftDue = QDate::currentDate();

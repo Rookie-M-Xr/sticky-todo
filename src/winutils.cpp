@@ -7,6 +7,7 @@
 
 #include "winutils.h"
 
+#include <QByteArray>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
@@ -681,5 +682,211 @@ QString windowsErrorText(unsigned long code)
         text = QStringLiteral("未知错误");
     return QStringLiteral("%1（错误 %2）").arg(text).arg(code);
 }
+
+bool globalHotkeySupported(QString *reason)
+{
+    Q_UNUSED(reason);
+    return true;
+}
+
+namespace {
+
+constexpr int kHotkeyId = 1;
+HWND g_hotkeyHwnd = nullptr;
+QString g_hotkeyText;
+UINT g_hotkeyMods = 0;
+UINT g_hotkeyVk = 0;
+
+QStringList splitHotkeyTokens(const QString &text)
+{
+    QStringList parts;
+    for (const QString &raw : text.split(QLatin1Char('+'), Qt::SkipEmptyParts)) {
+        const QString t = raw.trimmed();
+        if (!t.isEmpty())
+            parts.append(t);
+    }
+    return parts;
+}
+
+bool mapHotkeyToken(const QString &token, UINT *mods, UINT *vk, QString *canonPart)
+{
+    const QString lower = token.toLower();
+    if (lower == QLatin1String("ctrl") || lower == QLatin1String("control")) {
+        *mods |= MOD_CONTROL;
+        if (canonPart)
+            *canonPart = QStringLiteral("Ctrl");
+        return true;
+    }
+    if (lower == QLatin1String("alt") || lower == QLatin1String("option")) {
+        *mods |= MOD_ALT;
+        if (canonPart)
+            *canonPart = QStringLiteral("Alt");
+        return true;
+    }
+    if (lower == QLatin1String("shift")) {
+        *mods |= MOD_SHIFT;
+        if (canonPart)
+            *canonPart = QStringLiteral("Shift");
+        return true;
+    }
+    if (lower == QLatin1String("win") || lower == QLatin1String("meta")
+        || lower == QLatin1String("super")) {
+        *mods |= MOD_WIN;
+        if (canonPart)
+            *canonPart = QStringLiteral("Win");
+        return true;
+    }
+    if (token.size() == 1) {
+        const QChar ch = token.at(0).toUpper();
+        if ((ch >= QLatin1Char('A') && ch <= QLatin1Char('Z'))
+            || (ch >= QLatin1Char('0') && ch <= QLatin1Char('9'))) {
+            *vk = static_cast<UINT>(ch.unicode());
+            if (canonPart)
+                *canonPart = QString(ch);
+            return true;
+        }
+    }
+    if (lower.size() >= 2 && lower.startsWith(QLatin1Char('f'))) {
+        bool ok = false;
+        const int n = lower.mid(1).toInt(&ok);
+        if (ok && n >= 1 && n <= 12) {
+            *vk = static_cast<UINT>(VK_F1 + (n - 1));
+            if (canonPart)
+                *canonPart = QStringLiteral("F%1").arg(n);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool parseHotkey(const QString &text, UINT *mods, UINT *vk, QString *normalized)
+{
+    *mods = 0;
+    *vk = 0;
+    const QString trimmed = text.trimmed();
+    if (trimmed.isEmpty()) {
+        if (normalized)
+            normalized->clear();
+        return true;
+    }
+    const QStringList parts = splitHotkeyTokens(trimmed);
+    if (parts.isEmpty())
+        return false;
+    QStringList canonMods;
+    QString canonKey;
+    for (const QString &part : parts) {
+        QString canon;
+        UINT beforeVk = *vk;
+        if (!mapHotkeyToken(part, mods, vk, &canon))
+            return false;
+        if (*vk != beforeVk && *vk != 0) {
+            if (!canonKey.isEmpty())
+                return false; // more than one key
+            canonKey = canon;
+        } else {
+            if (!canonMods.contains(canon))
+                canonMods.append(canon);
+        }
+    }
+    if (canonKey.isEmpty() || *mods == 0)
+        return false; // require at least one modifier + one key
+    // Stable order: Ctrl, Alt, Shift, Win, Key
+    QStringList ordered;
+    if (*mods & MOD_CONTROL)
+        ordered.append(QStringLiteral("Ctrl"));
+    if (*mods & MOD_ALT)
+        ordered.append(QStringLiteral("Alt"));
+    if (*mods & MOD_SHIFT)
+        ordered.append(QStringLiteral("Shift"));
+    if (*mods & MOD_WIN)
+        ordered.append(QStringLiteral("Win"));
+    ordered.append(canonKey);
+    if (normalized)
+        *normalized = ordered.join(QLatin1Char('+'));
+    return true;
+}
+
+HWND hwndOf(QWidget *owner)
+{
+    if (!owner)
+        return nullptr;
+    return reinterpret_cast<HWND>(owner->winId());
+}
+
+} // namespace
+
+QString normalizeGlobalHotkey(const QString &text)
+{
+    UINT mods = 0;
+    UINT vk = 0;
+    QString normalized;
+    if (!parseHotkey(text, &mods, &vk, &normalized))
+        return QString();
+    return normalized;
+}
+
+bool setGlobalHotkey(QWidget *owner, const QString &normalized, QString *error)
+{
+    if (error)
+        error->clear();
+    clearGlobalHotkey();
+    const QString text = normalized.trimmed();
+    if (text.isEmpty())
+        return true;
+    UINT mods = 0;
+    UINT vk = 0;
+    QString canon;
+    if (!parseHotkey(text, &mods, &vk, &canon) || canon.isEmpty()) {
+        if (error)
+            *error = QStringLiteral("快捷键格式无效，请使用如 Ctrl+Alt+T");
+        return false;
+    }
+    if (!owner) {
+        if (error)
+            *error = QStringLiteral("内部错误：无窗口句柄");
+        return false;
+    }
+    owner->winId(); // ensure native handle
+    HWND hwnd = hwndOf(owner);
+    if (!hwnd) {
+        if (error)
+            *error = QStringLiteral("窗口尚未创建，无法注册热键");
+        return false;
+    }
+    // MOD_NOREPEAT avoids key-repeat spam while held.
+    const UINT flags = mods | MOD_NOREPEAT;
+    if (!RegisterHotKey(hwnd, kHotkeyId, flags, vk)) {
+        if (error)
+            *error = QStringLiteral("注册失败：%1").arg(windowsErrorText(GetLastError()));
+        return false;
+    }
+    g_hotkeyHwnd = hwnd;
+    g_hotkeyText = canon;
+    g_hotkeyMods = mods;
+    g_hotkeyVk = vk;
+    return true;
+}
+
+void clearGlobalHotkey()
+{
+    if (g_hotkeyHwnd) {
+        UnregisterHotKey(g_hotkeyHwnd, kHotkeyId);
+        g_hotkeyHwnd = nullptr;
+    }
+    g_hotkeyText.clear();
+    g_hotkeyMods = 0;
+    g_hotkeyVk = 0;
+}
+
+bool isGlobalHotkeyEvent(const QByteArray &eventType, void *message)
+{
+    if (!g_hotkeyHwnd || !message)
+        return false;
+    if (eventType != "windows_generic_MSG")
+        return false;
+    auto *msg = static_cast<MSG *>(message);
+    return msg->message == WM_HOTKEY && msg->wParam == static_cast<WPARAM>(kHotkeyId);
+}
+
 
 } // namespace WinUtils
