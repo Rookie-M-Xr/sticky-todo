@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.1.1
+
+- **日期**：2026-10-30（Asia/Shanghai）
+- **Tip**：见 Git tag `v0.1.1`（annotated）指向的 commit
+- **范围**：已关 TR #15 #16 #17 #22 #23（PATCH；不含 #18/#19）
+
+### 本版纳入
+
+- #15 低完整性：文档推荐 `Start StickyTodo.cmd`；Low 横幅/可退出，不静默抬权
+- #16 便携 `config` 只读时回退 `%LOCALAPPDATA%\StickyTodo\data`（可迁移已有 JSON）
+- #17 SmartScreen / 解除锁定：发布包文档与发版检查
+- #22 菜单不透明纸色 + 四角圆角遮罩，浅色/深色系统下文字可读
+- #23 文案精简：去掉冗长 toast/设置引言；不可逆操作需确认；托盘气泡仅首次
+
+### 已知限制
+
+- Linux Wayland：系统级全局热键受限，注册会失败并提示；不额外申请门户权限。
+- Linux 包需宿主提供 xcb（Wayland-only 会话可能需兼容层）；详见 Linux 包内 README。
+- 低完整性进程必须使用 `Start StickyTodo.cmd` 启动（不会静默抬到 Medium）。
+
 ## v0.1.0
 
 - **日期**：2026-10-30（Asia/Shanghai）

@@ -588,7 +588,7 @@ QWidget *SettingsPage::buildAboutCard()
     auto *title = new QLabel(QStringLiteral("Sticky Todo"), content);
     title->setFont(Theme::titleFont(14));
     title->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(Theme::Ink.name()));
-    auto *badge = new QLabel(QStringLiteral("v0.1.0"), content);
+    auto *badge = new QLabel(QStringLiteral("v0.1.1"), content);
     badge->setFont(Theme::uiFont(9, QFont::DemiBold));
     badge->setStyleSheet(QStringLiteral(
         "QLabel { color: #6f7c51; background: rgba(111,124,81,0.12); border-radius: 6px; padding: 1px 5px; }"));
