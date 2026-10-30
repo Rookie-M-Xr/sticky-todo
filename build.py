@@ -86,6 +86,7 @@ LDFLAGS = [
     "-luser32",
     "-lshell32",
     "-ltaskschd",
+    "-lwbemuuid",
     "-ladvapi32",
     "-ldwmapi",
     "-lversion",

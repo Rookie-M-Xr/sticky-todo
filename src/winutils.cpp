@@ -41,6 +41,7 @@
 #include <servprov.h>
 #include <shlguid.h>
 #include <taskschd.h>
+#include <wbemidl.h>
 
 namespace {
 
@@ -389,6 +390,167 @@ bool writeHandoffScript(const QString &scriptPath, const QString &srcDir, const 
     if (file.write(bytes) != bytes.size())
         return false;
     return file.commit();
+}
+
+
+void appendHandoffLog(const QString &exeDir, const QString &line)
+{
+    if (exeDir.isEmpty())
+        return;
+    const QString path = QDir(exeDir).filePath(QStringLiteral("StickyTodo-handoff.log"));
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text))
+        return;
+    f.write(line.toUtf8());
+    f.write("\n");
+}
+
+bool launchHandoffViaWmi(const QString &scriptPath, const QString &workingDir, const QString &exeDir)
+{
+    // TR #15: WMI Win32_Process.Create is served out-of-proc and often starts the
+    // command at the interactive user's Medium IL when Low COM brokers are blocked.
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    bool shouldUninit = false;
+    if (hr == S_OK || hr == S_FALSE) {
+        shouldUninit = true;
+    } else if (hr != RPC_E_CHANGED_MODE) {
+        appendHandoffLog(exeDir, QStringLiteral("wmi: CoInitializeEx hr=0x%1")
+                                       .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
+        return false;
+    }
+
+    hr = CoInitializeSecurity(nullptr, -1, nullptr, nullptr, RPC_C_AUTHN_LEVEL_DEFAULT,
+                              RPC_C_IMP_LEVEL_IMPERSONATE, nullptr, EOAC_NONE, nullptr);
+    // RPC_E_TOO_LATE is fine if already set.
+    if (FAILED(hr) && hr != RPC_E_TOO_LATE) {
+        appendHandoffLog(exeDir, QStringLiteral("wmi: CoInitializeSecurity hr=0x%1")
+                                       .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
+        // continue — some hosts already configured security
+    }
+
+    IWbemLocator *locator = nullptr;
+    hr = CoCreateInstance(CLSID_WbemLocator, nullptr, CLSCTX_INPROC_SERVER, IID_IWbemLocator,
+                          reinterpret_cast<void **>(&locator));
+    if (FAILED(hr) || !locator) {
+        appendHandoffLog(exeDir, QStringLiteral("wmi: WbemLocator hr=0x%1")
+                                       .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    IWbemServices *services = nullptr;
+    BSTR ns = SysAllocString(L"ROOT\\CIMV2");
+    hr = locator->ConnectServer(ns, nullptr, nullptr, nullptr, 0, nullptr, nullptr, &services);
+    SysFreeString(ns);
+    locator->Release();
+    if (FAILED(hr) || !services) {
+        appendHandoffLog(exeDir, QStringLiteral("wmi: ConnectServer hr=0x%1")
+                                       .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    hr = CoSetProxyBlanket(services, RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE, nullptr,
+                           RPC_C_AUTHN_LEVEL_CALL, RPC_C_IMP_LEVEL_IMPERSONATE, nullptr,
+                           EOAC_NONE);
+    if (FAILED(hr)) {
+        appendHandoffLog(exeDir, QStringLiteral("wmi: ProxyBlanket hr=0x%1")
+                                       .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
+        services->Release();
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    IWbemClassObject *processClass = nullptr;
+    BSTR className = SysAllocString(L"Win32_Process");
+    hr = services->GetObject(className, 0, nullptr, &processClass, nullptr);
+    SysFreeString(className);
+    if (FAILED(hr) || !processClass) {
+        appendHandoffLog(exeDir, QStringLiteral("wmi: GetObject hr=0x%1")
+                                       .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
+        services->Release();
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    IWbemClassObject *inParamsDef = nullptr;
+    BSTR createName = SysAllocString(L"Create");
+    hr = processClass->GetMethod(createName, 0, &inParamsDef, nullptr);
+    processClass->Release();
+    if (FAILED(hr) || !inParamsDef) {
+        appendHandoffLog(exeDir, QStringLiteral("wmi: GetMethod hr=0x%1")
+                                       .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
+        SysFreeString(createName);
+        services->Release();
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    IWbemClassObject *inParams = nullptr;
+    hr = inParamsDef->SpawnInstance(0, &inParams);
+    inParamsDef->Release();
+    if (FAILED(hr) || !inParams) {
+        appendHandoffLog(exeDir, QStringLiteral("wmi: SpawnInstance hr=0x%1")
+                                       .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
+        SysFreeString(createName);
+        services->Release();
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    const QString cmdLine = QStringLiteral("cmd.exe /c \"\"%1\"\"")
+                                .arg(QDir::toNativeSeparators(scriptPath));
+    const QString work = QDir::toNativeSeparators(workingDir);
+    VARIANT vCmd;
+    VARIANT vDir;
+    VariantInit(&vCmd);
+    VariantInit(&vDir);
+    vCmd.vt = VT_BSTR;
+    vCmd.bstrVal = SysAllocString(cmdLine.toStdWString().c_str());
+    vDir.vt = VT_BSTR;
+    vDir.bstrVal = SysAllocString(work.toStdWString().c_str());
+    inParams->Put(L"CommandLine", 0, &vCmd, 0);
+    inParams->Put(L"CurrentDirectory", 0, &vDir, 0);
+    VariantClear(&vCmd);
+    VariantClear(&vDir);
+
+    IWbemClassObject *outParams = nullptr;
+    BSTR processPath = SysAllocString(L"Win32_Process");
+    hr = services->ExecMethod(processPath, createName, 0, nullptr, inParams, &outParams, nullptr);
+    SysFreeString(processPath);
+    SysFreeString(createName);
+    inParams->Release();
+    services->Release();
+
+    bool ok = false;
+    if (SUCCEEDED(hr) && outParams) {
+        VARIANT vRet;
+        VariantInit(&vRet);
+        if (SUCCEEDED(outParams->Get(L"ReturnValue", 0, &vRet, nullptr, nullptr))) {
+            if (vRet.vt == VT_I4)
+                ok = (vRet.lVal == 0);
+            else if (vRet.vt == VT_UI4)
+                ok = (vRet.ulVal == 0);
+            appendHandoffLog(exeDir, QStringLiteral("wmi: ReturnValue=%1 hr=0x%2")
+                                           .arg(vRet.vt == VT_I4 ? vRet.lVal : int(vRet.ulVal))
+                                           .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
+            VariantClear(&vRet);
+        }
+        outParams->Release();
+    } else {
+        appendHandoffLog(exeDir, QStringLiteral("wmi: ExecMethod hr=0x%1")
+                                       .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
+    }
+
+    if (shouldUninit)
+        CoUninitialize();
+    return ok;
 }
 
 bool launchHandoffViaTaskScheduler(const QString &scriptPath)
@@ -1069,10 +1231,25 @@ bool handoffIfLowIntegrity()
     if (!writeHandoffScript(scriptPath, exeDir, dataDir))
         return false;
 
-    // TR #15: prefer Task Scheduler (Medium interactive), then Explorer Shell.
-    if (launchHandoffViaTaskScheduler(scriptPath))
+    // TR #15: Low→Medium brokers (MIC may block some). Order: WMI, Task Scheduler,
+    // Explorer Shell. Log failures beside the exe for 小测.
+    appendHandoffLog(exeDir, QStringLiteral("handoff: begin script=%1")
+                                   .arg(QDir::toNativeSeparators(scriptPath)));
+    if (launchHandoffViaWmi(scriptPath, exeDir, exeDir)) {
+        appendHandoffLog(exeDir, QStringLiteral("handoff: WMI ok"));
         return true;
-    return launchHandoffViaShellApplication(scriptPath, exeDir);
+    }
+    if (launchHandoffViaTaskScheduler(scriptPath)) {
+        appendHandoffLog(exeDir, QStringLiteral("handoff: TaskScheduler ok"));
+        return true;
+    }
+    appendHandoffLog(exeDir, QStringLiteral("handoff: TaskScheduler failed"));
+    if (launchHandoffViaShellApplication(scriptPath, exeDir)) {
+        appendHandoffLog(exeDir, QStringLiteral("handoff: ExplorerShell ok"));
+        return true;
+    }
+    appendHandoffLog(exeDir, QStringLiteral("handoff: all brokers failed"));
+    return false;
 }
 
 
