@@ -76,6 +76,25 @@ $env:STICKY_TODO_DATA_DIR = "$PWD\testdata"
 
 `STICKY_TODO_DATA_DIR` / `--data-dir` 只用于测试隔离或启动脚本定点；日常请固定走 `Start StickyTodo.cmd`，设置页可打开当前实际数据目录确认路径。
 
+## 提交约定
+
+采用 Conventional Commits：类型前缀 + **中文**说明，禁止无前缀裸提交。
+
+| 前缀 | 含义 |
+|------|------|
+| `feat` | 新功能 |
+| `fix` | 缺陷修复 |
+| `chore` | 构建/工具/杂项（不改产品行为） |
+| `docs` | 文档 |
+| `test` | 测试 |
+| `refactor` | 重构（无行为变化） |
+
+示例：
+
+- `fix: 修复多屏贴边后屏名未更新`
+- `docs: README 去掉本机绝对路径`
+- `chore: 构建脚本改为仅使用环境变量`
+
 ## 实现要点
 
 - 无边框透明窗口 + 自绘纸质卡片，单 exe 加 Qt 运行库，无后台服务。
