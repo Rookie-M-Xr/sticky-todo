@@ -18,8 +18,19 @@ TESTS = ROOT / "tests"
 BUILD = ROOT / "build" / "tests"
 TESTDATA = ROOT / "testdata"
 
-QT = Path(os.environ.get("STICKY_QT_DIR", r"D:\cache-QT6\6.11.1\mingw_64"))
-MINGW = Path(os.environ.get("STICKY_MINGW_DIR", r"D:\cache-mingw64\x86_64-14.2.0\mingw64"))
+_qt = os.environ.get("STICKY_QT_DIR")
+_mingw = os.environ.get("STICKY_MINGW_DIR")
+if not _qt or not _mingw:
+    print(
+        "error: set STICKY_QT_DIR and STICKY_MINGW_DIR to your toolchain prefixes "
+        "(e.g. STICKY_QT_DIR=C:\\Qt\\6.11.1\\mingw_64, "
+        "STICKY_MINGW_DIR=C:\\mingw64). "
+        "No machine-specific defaults are baked into the repo.",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+QT = Path(_qt)
+MINGW = Path(_mingw)
 BIN = MINGW / "bin"
 QTBIN = QT / "bin"
 
