@@ -23,19 +23,14 @@ dist/              绿色发布目录
 - Python 3
 - 没有使用 qmake 或 CMake；`build.py` 直接调用 `moc`、`rcc`、`windres` 和 `g++`
 
-默认路径：
-
-```text
-D:\cache-QT6\6.11.1\mingw_64
-D:\cache-mingw64\x86_64-14.2.0\mingw64
-```
-
-如安装位置不同，设置环境变量：
+构建前必须设置环境变量（未设置则 `build.py` 失败退出）：
 
 ```powershell
 $env:STICKY_QT_DIR = 'C:\Qt\6.11.1\mingw_64'
 $env:STICKY_MINGW_DIR = 'C:\mingw64'
 ```
+
+路径按本机 Qt / MinGW 安装位置修改；仓库不写死任何本机绝对路径。
 
 ## 构建
 
