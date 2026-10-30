@@ -2,6 +2,7 @@
 
 #include <QColor>
 #include <QFont>
+#include <QPalette>
 #include <QString>
 
 namespace Theme {
@@ -25,6 +26,8 @@ QString uiFamily();
 QString displayFamily();
 QFont uiFont(int pixelSize, int weight = QFont::Normal);
 QFont titleFont(int pixelSize);
+QPalette applicationPalette();
 QString styleSheet();
+void applyApplicationChrome();
 
 } // namespace Theme
