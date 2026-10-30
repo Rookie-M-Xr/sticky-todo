@@ -43,9 +43,13 @@ DataStore::DataStore(QObject *parent)
     m_todoSaveTimer.setSingleShot(true);
     m_settingsSaveTimer.setSingleShot(true);
     m_dailySaveTimer.setSingleShot(true);
+    m_weeklySaveTimer.setSingleShot(true);
+    m_monthlySaveTimer.setSingleShot(true);
     connect(&m_todoSaveTimer, &QTimer::timeout, this, &DataStore::saveTodosNow);
     connect(&m_settingsSaveTimer, &QTimer::timeout, this, &DataStore::saveSettingsNow);
     connect(&m_dailySaveTimer, &QTimer::timeout, this, [this]() { saveDailyNow(); });
+    connect(&m_weeklySaveTimer, &QTimer::timeout, this, [this]() { saveWeeklyNow(); });
+    connect(&m_monthlySaveTimer, &QTimer::timeout, this, [this]() { saveMonthlyNow(); });
 }
 
 QString DataStore::resolveDataDir() const
@@ -82,6 +86,16 @@ QString DataStore::dailyReportsPath() const
     return QDir(m_dataDir).filePath(QStringLiteral("daily-reports.json"));
 }
 
+QString DataStore::weeklyReportsPath() const
+{
+    return QDir(m_dataDir).filePath(QStringLiteral("weekly-reports.json"));
+}
+
+QString DataStore::monthlyReportsPath() const
+{
+    return QDir(m_dataDir).filePath(QStringLiteral("monthly-reports.json"));
+}
+
 bool DataStore::load()
 {
     m_dataDir = resolveDataDir();
@@ -97,6 +111,8 @@ bool DataStore::load()
     loadTodos();
     loadSettings();
     loadDailyReports();
+    loadWeeklyReports();
+    loadMonthlyReports();
     // R0: auto-purge completed items older than retentionDays once per load.
     applyRetentionOnLoad();
     return true;
@@ -107,6 +123,8 @@ bool DataStore::flush()
     m_todoSaveTimer.stop();
     m_settingsSaveTimer.stop();
     m_dailySaveTimer.stop();
+    m_weeklySaveTimer.stop();
+    m_monthlySaveTimer.stop();
     bool ok = true;
     if (m_todosDirty) {
         saveTodosNow();
@@ -119,6 +137,14 @@ bool DataStore::flush()
     if (m_dailyDirty) {
         saveDailyNow();
         ok = ok && !m_dailyDirty;
+    }
+    if (m_weeklyDirty) {
+        saveWeeklyNow();
+        ok = ok && !m_weeklyDirty;
+    }
+    if (m_monthlyDirty) {
+        saveMonthlyNow();
+        ok = ok && !m_monthlyDirty;
     }
     return ok;
 }
@@ -262,6 +288,33 @@ void DataStore::setRetentionDays(int days)
     if (m_settings.retentionDays == next)
         return;
     m_settings.retentionDays = next;
+    scheduleSettingsSave(0);
+    emit settingsChanged();
+}
+
+void DataStore::setShowDailyReport(bool on)
+{
+    if (m_settings.showDailyReport == on)
+        return;
+    m_settings.showDailyReport = on;
+    scheduleSettingsSave(0);
+    emit settingsChanged();
+}
+
+void DataStore::setShowWeeklyReport(bool on)
+{
+    if (m_settings.showWeeklyReport == on)
+        return;
+    m_settings.showWeeklyReport = on;
+    scheduleSettingsSave(0);
+    emit settingsChanged();
+}
+
+void DataStore::setShowMonthlyReport(bool on)
+{
+    if (m_settings.showMonthlyReport == on)
+        return;
+    m_settings.showMonthlyReport = on;
     scheduleSettingsSave(0);
     emit settingsChanged();
 }
@@ -563,6 +616,9 @@ void DataStore::saveSettingsNow()
     root.insert(QStringLiteral("collapsed"), m_settings.collapsed);
     root.insert(QStringLiteral("pinned"), m_settings.pinned);
     root.insert(QStringLiteral("retentionDays"), m_settings.retentionDays);
+    root.insert(QStringLiteral("showDailyReport"), m_settings.showDailyReport);
+    root.insert(QStringLiteral("showWeeklyReport"), m_settings.showWeeklyReport);
+    root.insert(QStringLiteral("showMonthlyReport"), m_settings.showMonthlyReport);
     root.insert(QStringLiteral("draft"), m_settings.draft);
     root.insert(QStringLiteral("draftDue"),
                 m_settings.draftDue.isValid() ? m_settings.draftDue.toString(Qt::ISODate) : QString());
@@ -754,6 +810,9 @@ void DataStore::loadSettings()
         settings->collapsed = root.value(QStringLiteral("collapsed")).toBool(false);
         settings->pinned = root.value(QStringLiteral("pinned")).toBool(false);
         settings->retentionDays = qBound(1, root.value(QStringLiteral("retentionDays")).toInt(30), 3650);
+        settings->showDailyReport = root.value(QStringLiteral("showDailyReport")).toBool(true);
+        settings->showWeeklyReport = root.value(QStringLiteral("showWeeklyReport")).toBool(true);
+        settings->showMonthlyReport = root.value(QStringLiteral("showMonthlyReport")).toBool(true);
         settings->draft = root.value(QStringLiteral("draft")).toString().left(1000);
         const QString dueText = root.value(QStringLiteral("draftDue")).toString();
         settings->draftDue = QDate::fromString(dueText, Qt::ISODate);
@@ -880,6 +939,9 @@ bool DataStore::reloadSettingsBackup(QString *warning)
     fallback.collapsed = root.value(QStringLiteral("collapsed")).toBool(false);
     fallback.pinned = root.value(QStringLiteral("pinned")).toBool(false);
     fallback.retentionDays = qBound(1, root.value(QStringLiteral("retentionDays")).toInt(30), 3650);
+    fallback.showDailyReport = root.value(QStringLiteral("showDailyReport")).toBool(true);
+    fallback.showWeeklyReport = root.value(QStringLiteral("showWeeklyReport")).toBool(true);
+    fallback.showMonthlyReport = root.value(QStringLiteral("showMonthlyReport")).toBool(true);
     fallback.draft = root.value(QStringLiteral("draft")).toString().left(1000);
     fallback.draftDue = QDate::fromString(root.value(QStringLiteral("draftDue")).toString(), Qt::ISODate);
     if (!fallback.draftDue.isValid())
@@ -930,46 +992,87 @@ void DataStore::scheduleDailySave(int delayMs)
     m_dailySaveTimer.start(delayMs);
 }
 
-void DataStore::saveDailyNow()
+void DataStore::scheduleWeeklySave(int delayMs)
 {
-    m_dailySaveTimer.stop();
-    if (!m_dailyDirty)
+    m_weeklyDirty = true;
+    if (delayMs <= 0) {
+        m_weeklySaveTimer.stop();
+        saveWeeklyNow();
+        return;
+    }
+    m_weeklySaveTimer.start(delayMs);
+}
+
+void DataStore::scheduleMonthlySave(int delayMs)
+{
+    m_monthlyDirty = true;
+    if (delayMs <= 0) {
+        m_monthlySaveTimer.stop();
+        saveMonthlyNow();
+        return;
+    }
+    m_monthlySaveTimer.start(delayMs);
+}
+
+void DataStore::savePeriodReportsFile(const QString &path, const QString &bucketKey,
+                                      const QMap<QString, QVector<DailySnapshot>> &map, bool *dirty,
+                                      QTimer *timer, const QString &failLabel)
+{
+    timer->stop();
+    if (!*dirty)
         return;
 
-    QJsonObject days;
-    for (auto it = m_dailyByDate.constBegin(); it != m_dailyByDate.constEnd(); ++it) {
+    QJsonObject buckets;
+    for (auto it = map.constBegin(); it != map.constEnd(); ++it) {
         QJsonArray array;
         for (const DailySnapshot &snap : it.value())
             array.append(snap.toJson());
-        days.insert(it.key(), array);
+        buckets.insert(it.key(), array);
     }
     QJsonObject root;
     root.insert(QStringLiteral("schemaVersion"), kSchemaVersion);
-    root.insert(QStringLiteral("days"), days);
+    root.insert(bucketKey, buckets);
 
     QString error;
-    if (writeJson(dailyReportsPath(), root, &error)) {
-        m_dailyDirty = false;
+    if (writeJson(path, root, &error)) {
+        *dirty = false;
         m_lastError.clear();
     } else {
-        const QString message = QStringLiteral("日报保存失败：%1").arg(error);
+        const QString message = QStringLiteral("%1：%2").arg(failLabel, error);
         m_lastError = message;
         addNotice(message);
         emit errorOccurred(message);
     }
 }
 
-void DataStore::loadDailyReports()
+void DataStore::saveDailyNow()
 {
-    m_dailyByDate.clear();
-    m_dailyDirty = false;
-    const QString path = dailyReportsPath();
+    savePeriodReportsFile(dailyReportsPath(), QStringLiteral("days"), m_dailyByDate, &m_dailyDirty,
+                          &m_dailySaveTimer, QStringLiteral("日报保存失败"));
+}
+
+void DataStore::saveWeeklyNow()
+{
+    savePeriodReportsFile(weeklyReportsPath(), QStringLiteral("weeks"), m_weeklyByKey, &m_weeklyDirty,
+                          &m_weeklySaveTimer, QStringLiteral("周报保存失败"));
+}
+
+void DataStore::saveMonthlyNow()
+{
+    savePeriodReportsFile(monthlyReportsPath(), QStringLiteral("months"), m_monthlyByKey, &m_monthlyDirty,
+                          &m_monthlySaveTimer, QStringLiteral("月报保存失败"));
+}
+
+void DataStore::loadPeriodReportsFile(const QString &path, const QString &bucketKey,
+                                      QMap<QString, QVector<DailySnapshot>> *map, const QString &label)
+{
+    map->clear();
     if (!QFileInfo::exists(path))
         return;
 
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
-        addNotice(QStringLiteral("无法读取日报文件。"));
+        addNotice(QStringLiteral("无法读取%1文件。").arg(label));
         return;
     }
     QJsonParseError parseError;
@@ -977,15 +1080,15 @@ void DataStore::loadDailyReports()
     file.close();
     if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
         preserveCorruptFile(path);
-        addNotice(QStringLiteral("日报文件损坏，已保留损坏副本。"));
+        addNotice(QStringLiteral("%1文件损坏，已保留损坏副本。").arg(label));
         return;
     }
     const QJsonObject root = doc.object();
-    const QJsonValue daysValue = root.value(QStringLiteral("days"));
-    if (!daysValue.isObject())
+    const QJsonValue bucketsValue = root.value(bucketKey);
+    if (!bucketsValue.isObject())
         return;
-    const QJsonObject days = daysValue.toObject();
-    for (auto it = days.constBegin(); it != days.constEnd(); ++it) {
+    const QJsonObject buckets = bucketsValue.toObject();
+    for (auto it = buckets.constBegin(); it != buckets.constEnd(); ++it) {
         if (!it.value().isArray())
             continue;
         QVector<DailySnapshot> list;
@@ -1001,16 +1104,36 @@ void DataStore::loadDailyReports()
                 list.append(snap);
         }
         if (!list.isEmpty())
-            m_dailyByDate.insert(it.key(), list);
+            map->insert(it.key(), list);
     }
 }
 
-int DataStore::syncDailyFromCompleted(QDate day)
+void DataStore::loadDailyReports()
 {
-    if (!day.isValid())
-        day = QDate::currentDate();
-    const QString key = day.toString(Qt::ISODate);
-    QVector<DailySnapshot> &list = m_dailyByDate[key];
+    m_dailyDirty = false;
+    loadPeriodReportsFile(dailyReportsPath(), QStringLiteral("days"), &m_dailyByDate,
+                          QStringLiteral("日报"));
+}
+
+void DataStore::loadWeeklyReports()
+{
+    m_weeklyDirty = false;
+    loadPeriodReportsFile(weeklyReportsPath(), QStringLiteral("weeks"), &m_weeklyByKey,
+                          QStringLiteral("周报"));
+}
+
+void DataStore::loadMonthlyReports()
+{
+    m_monthlyDirty = false;
+    loadPeriodReportsFile(monthlyReportsPath(), QStringLiteral("months"), &m_monthlyByKey,
+                          QStringLiteral("月报"));
+}
+
+int DataStore::syncRangeFromCompleted(QMap<QString, QVector<DailySnapshot>> *map, const QString &key,
+                                      QDate rangeStart, QDate rangeEnd, bool *dirtyFlag, QTimer *timer,
+                                      const std::function<void()> &emitChanged)
+{
+    QVector<DailySnapshot> &list = (*map)[key];
 
     QSet<QString> existingSources;
     for (const DailySnapshot &snap : list) {
@@ -1023,7 +1146,8 @@ int DataStore::syncDailyFromCompleted(QDate day)
     for (const TodoItem &todo : m_todos) {
         if (!todo.completed || !todo.completedAt.isValid())
             continue;
-        if (todo.completedAt.date() != day)
+        const QDate doneDay = todo.completedAt.date();
+        if (doneDay < rangeStart || doneDay > rangeEnd)
             continue;
         if (existingSources.contains(todo.id))
             continue;
@@ -1031,7 +1155,7 @@ int DataStore::syncDailyFromCompleted(QDate day)
         snap.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
         snap.text = todo.text;
         snap.sourceTodoId = todo.id;
-        snap.date = day;
+        snap.date = doneDay;
         snap.createdAt = now;
         snap.updatedAt = now;
         list.append(snap);
@@ -1040,10 +1164,59 @@ int DataStore::syncDailyFromCompleted(QDate day)
     }
 
     if (added > 0) {
-        scheduleDailySave(0);
-        emit dailyReportsChanged();
+        *dirtyFlag = true;
+        timer->stop();
+        // Immediate persist for report edits/syncs (same as daily).
+        if (timer == &m_dailySaveTimer)
+            saveDailyNow();
+        else if (timer == &m_weeklySaveTimer)
+            saveWeeklyNow();
+        else if (timer == &m_monthlySaveTimer)
+            saveMonthlyNow();
+        emitChanged();
     }
     return added;
+}
+
+int DataStore::syncDailyFromCompleted(QDate day)
+{
+    if (!day.isValid())
+        day = QDate::currentDate();
+    return syncRangeFromCompleted(&m_dailyByDate, day.toString(Qt::ISODate), day, day, &m_dailyDirty,
+                                  &m_dailySaveTimer, [this]() { emit dailyReportsChanged(); });
+}
+
+int DataStore::syncWeeklyFromCompleted(QDate day)
+{
+    if (!day.isValid())
+        day = QDate::currentDate();
+    const QDate start = reportWeekStart(day);
+    const QDate end = reportWeekEnd(day);
+    return syncRangeFromCompleted(&m_weeklyByKey, reportWeekKey(day), start, end, &m_weeklyDirty,
+                                  &m_weeklySaveTimer, [this]() { emit weeklyReportsChanged(); });
+}
+
+int DataStore::syncMonthlyFromCompleted(QDate day)
+{
+    if (!day.isValid())
+        day = QDate::currentDate();
+    const QDate start(day.year(), day.month(), 1);
+    const QDate end(day.year(), day.month(), day.daysInMonth());
+    return syncRangeFromCompleted(&m_monthlyByKey, reportMonthKey(day), start, end, &m_monthlyDirty,
+                                  &m_monthlySaveTimer, [this]() { emit monthlyReportsChanged(); });
+}
+
+int DataStore::syncReportFromCompleted(ReportKind kind, QDate day)
+{
+    switch (kind) {
+    case ReportKind::Daily:
+        return syncDailyFromCompleted(day);
+    case ReportKind::Weekly:
+        return syncWeeklyFromCompleted(day);
+    case ReportKind::Monthly:
+        return syncMonthlyFromCompleted(day);
+    }
+    return 0;
 }
 
 QVector<DailySnapshot> DataStore::dailySnapshots(QDate day) const
@@ -1053,10 +1226,69 @@ QVector<DailySnapshot> DataStore::dailySnapshots(QDate day) const
     return m_dailyByDate.value(day.toString(Qt::ISODate));
 }
 
+QVector<DailySnapshot> DataStore::weeklySnapshots(QDate day) const
+{
+    if (!day.isValid())
+        day = QDate::currentDate();
+    return m_weeklyByKey.value(reportWeekKey(day));
+}
+
+QVector<DailySnapshot> DataStore::monthlySnapshots(QDate day) const
+{
+    if (!day.isValid())
+        day = QDate::currentDate();
+    return m_monthlyByKey.value(reportMonthKey(day));
+}
+
+QVector<DailySnapshot> DataStore::reportSnapshots(ReportKind kind, QDate day) const
+{
+    switch (kind) {
+    case ReportKind::Daily:
+        return dailySnapshots(day);
+    case ReportKind::Weekly:
+        return weeklySnapshots(day);
+    case ReportKind::Monthly:
+        return monthlySnapshots(day);
+    }
+    return {};
+}
+
 bool DataStore::updateDailySnapshotText(const QString &snapshotId, const QString &text)
 {
+    return updateReportSnapshotText(ReportKind::Daily, snapshotId, text);
+}
+
+bool DataStore::updateReportSnapshotText(ReportKind kind, const QString &snapshotId, const QString &text)
+{
+    QMap<QString, QVector<DailySnapshot>> *map = nullptr;
+    bool *dirty = nullptr;
+    QTimer *timer = nullptr;
+    std::function<void()> emitChanged;
+    switch (kind) {
+    case ReportKind::Daily:
+        map = &m_dailyByDate;
+        dirty = &m_dailyDirty;
+        timer = &m_dailySaveTimer;
+        emitChanged = [this]() { emit dailyReportsChanged(); };
+        break;
+    case ReportKind::Weekly:
+        map = &m_weeklyByKey;
+        dirty = &m_weeklyDirty;
+        timer = &m_weeklySaveTimer;
+        emitChanged = [this]() { emit weeklyReportsChanged(); };
+        break;
+    case ReportKind::Monthly:
+        map = &m_monthlyByKey;
+        dirty = &m_monthlyDirty;
+        timer = &m_monthlySaveTimer;
+        emitChanged = [this]() { emit monthlyReportsChanged(); };
+        break;
+    }
+    if (!map)
+        return false;
+
     const QString trimmed = text.left(4000);
-    for (auto it = m_dailyByDate.begin(); it != m_dailyByDate.end(); ++it) {
+    for (auto it = map->begin(); it != map->end(); ++it) {
         for (DailySnapshot &snap : it.value()) {
             if (snap.id != snapshotId)
                 continue;
@@ -1064,8 +1296,15 @@ bool DataStore::updateDailySnapshotText(const QString &snapshotId, const QString
                 return true;
             snap.text = trimmed;
             snap.updatedAt = QDateTime::currentDateTime();
-            scheduleDailySave(0);
-            emit dailyReportsChanged();
+            *dirty = true;
+            timer->stop();
+            if (kind == ReportKind::Daily)
+                saveDailyNow();
+            else if (kind == ReportKind::Weekly)
+                saveWeeklyNow();
+            else
+                saveMonthlyNow();
+            emitChanged();
             // Intentionally do NOT touch m_todos / write back to todos.
             return true;
         }
@@ -1094,3 +1333,65 @@ QString DataStore::formatDailyPlainText(QDate day) const
     return lines.join(QStringLiteral("\n"));
 }
 
+QString DataStore::formatWeeklyPlainText(QDate day) const
+{
+    if (!day.isValid())
+        day = QDate::currentDate();
+    const QDate start = reportWeekStart(day);
+    const QDate end = reportWeekEnd(day);
+    const QVector<DailySnapshot> list = weeklySnapshots(day);
+    QStringList lines;
+    lines.append(QStringLiteral("周报 %1（%2 ~ %3）")
+                     .arg(reportWeekKey(day), start.toString(QStringLiteral("MM-dd")),
+                          end.toString(QStringLiteral("MM-dd"))));
+    lines.append(QString());
+    if (list.isEmpty()) {
+        lines.append(QStringLiteral("（本周暂无完成项）"));
+    } else {
+        int i = 1;
+        for (const DailySnapshot &snap : list) {
+            const QString body = snap.text.trimmed().isEmpty() ? QStringLiteral("（空）") : snap.text.trimmed();
+            const QString dayTag = snap.date.isValid() ? snap.date.toString(QStringLiteral("MM-dd"))
+                                                       : QStringLiteral("??-??");
+            lines.append(QStringLiteral("%1. [%2] %3").arg(i).arg(dayTag, body));
+            ++i;
+        }
+    }
+    return lines.join(QStringLiteral("\n"));
+}
+
+QString DataStore::formatMonthlyPlainText(QDate day) const
+{
+    if (!day.isValid())
+        day = QDate::currentDate();
+    const QVector<DailySnapshot> list = monthlySnapshots(day);
+    QStringList lines;
+    lines.append(QStringLiteral("月报 %1").arg(reportMonthKey(day)));
+    lines.append(QString());
+    if (list.isEmpty()) {
+        lines.append(QStringLiteral("（本月暂无完成项）"));
+    } else {
+        int i = 1;
+        for (const DailySnapshot &snap : list) {
+            const QString body = snap.text.trimmed().isEmpty() ? QStringLiteral("（空）") : snap.text.trimmed();
+            const QString dayTag = snap.date.isValid() ? snap.date.toString(QStringLiteral("MM-dd"))
+                                                       : QStringLiteral("??-??");
+            lines.append(QStringLiteral("%1. [%2] %3").arg(i).arg(dayTag, body));
+            ++i;
+        }
+    }
+    return lines.join(QStringLiteral("\n"));
+}
+
+QString DataStore::formatReportPlainText(ReportKind kind, QDate day) const
+{
+    switch (kind) {
+    case ReportKind::Daily:
+        return formatDailyPlainText(day);
+    case ReportKind::Weekly:
+        return formatWeeklyPlainText(day);
+    case ReportKind::Monthly:
+        return formatMonthlyPlainText(day);
+    }
+    return {};
+}

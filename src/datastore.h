@@ -19,6 +19,9 @@ struct AppSettings {
     bool collapsed = false;
     bool pinned = false;
     int retentionDays = 30; // completed items older than N days are auto-purged on load
+    bool showDailyReport = true;
+    bool showWeeklyReport = true;
+    bool showMonthlyReport = true;
     QRect windowRect;
     QString screenName;
     QString draft;
@@ -64,12 +67,27 @@ public:
     int archiveAllCompleted();
 
     QString dailyReportsPath() const;
-    // Ensure today's completed todos have snapshot lines (editable copies; never write back).
-    // Returns number of newly appended snapshots.
+    QString weeklyReportsPath() const;
+    QString monthlyReportsPath() const;
+    // Ensure completed todos in the period have snapshot lines (editable copies; never write back).
     int syncDailyFromCompleted(QDate day = QDate());
+    int syncWeeklyFromCompleted(QDate day = QDate());
+    int syncMonthlyFromCompleted(QDate day = QDate());
+    int syncReportFromCompleted(ReportKind kind, QDate day = QDate());
     QVector<DailySnapshot> dailySnapshots(QDate day = QDate()) const;
+    QVector<DailySnapshot> weeklySnapshots(QDate day = QDate()) const;
+    QVector<DailySnapshot> monthlySnapshots(QDate day = QDate()) const;
+    QVector<DailySnapshot> reportSnapshots(ReportKind kind, QDate day = QDate()) const;
     bool updateDailySnapshotText(const QString &snapshotId, const QString &text);
+    bool updateReportSnapshotText(ReportKind kind, const QString &snapshotId, const QString &text);
     QString formatDailyPlainText(QDate day = QDate()) const;
+    QString formatWeeklyPlainText(QDate day = QDate()) const;
+    QString formatMonthlyPlainText(QDate day = QDate()) const;
+    QString formatReportPlainText(ReportKind kind, QDate day = QDate()) const;
+
+    void setShowDailyReport(bool on);
+    void setShowWeeklyReport(bool on);
+    void setShowMonthlyReport(bool on);
 
     void setDraft(const QString &draft);
     void setDraftDue(QDate date);
@@ -90,6 +108,8 @@ signals:
     void settingsChanged();
     void errorOccurred(const QString &message);
     void dailyReportsChanged();
+    void weeklyReportsChanged();
+    void monthlyReportsChanged();
 
 private slots:
     void saveTodosNow();
@@ -111,8 +131,22 @@ private:
     void applyRetentionOnLoad();
 
     void scheduleDailySave(int delayMs);
+    void scheduleWeeklySave(int delayMs);
+    void scheduleMonthlySave(int delayMs);
     void loadDailyReports();
+    void loadWeeklyReports();
+    void loadMonthlyReports();
     void saveDailyNow();
+    void saveWeeklyNow();
+    void saveMonthlyNow();
+    void loadPeriodReportsFile(const QString &path, const QString &bucketKey,
+                               QMap<QString, QVector<DailySnapshot>> *map, const QString &label);
+    void savePeriodReportsFile(const QString &path, const QString &bucketKey,
+                               const QMap<QString, QVector<DailySnapshot>> &map, bool *dirty,
+                               QTimer *timer, const QString &failLabel);
+    int syncRangeFromCompleted(QMap<QString, QVector<DailySnapshot>> *map, const QString &key,
+                               QDate rangeStart, QDate rangeEnd, bool *dirtyFlag, QTimer *timer,
+                               const std::function<void()> &emitChanged);
     int removeCompletedMatching(const std::function<bool(const TodoItem &)> &pred);
     int archiveThenRemoveMatching(const std::function<bool(const TodoItem &)> &pred);
     static bool isCompletedOlderThan(const TodoItem &item, int days, const QDateTime &now);
@@ -129,7 +163,13 @@ private:
     bool m_todosDirty = false;
     bool m_settingsDirty = false;
     QMap<QString, QVector<DailySnapshot>> m_dailyByDate; // key = yyyy-MM-dd
+    QMap<QString, QVector<DailySnapshot>> m_weeklyByKey; // key = yyyy-Www
+    QMap<QString, QVector<DailySnapshot>> m_monthlyByKey; // key = yyyy-MM
     QTimer m_dailySaveTimer;
+    QTimer m_weeklySaveTimer;
+    QTimer m_monthlySaveTimer;
     bool m_dailyDirty = false;
+    bool m_weeklyDirty = false;
+    bool m_monthlyDirty = false;
 };
 

@@ -195,6 +195,8 @@ void SettingsPage::buildUi()
 
     m_contentLayout->addWidget(sectionLabel(QStringLiteral("外观与行为"), m_content));
     m_contentLayout->addWidget(buildGeneralCard());
+    m_contentLayout->addWidget(sectionLabel(QStringLiteral("汇报"), m_content));
+    m_contentLayout->addWidget(buildReportsCard());
     m_contentLayout->addWidget(sectionLabel(QStringLiteral("窗口"), m_content));
     m_contentLayout->addWidget(buildWindowCard());
     m_contentLayout->addWidget(sectionLabel(QStringLiteral("数据"), m_content));
@@ -252,6 +254,47 @@ QWidget *SettingsPage::buildGeneralCard()
     connect(m_autoStartSwitch, &QAbstractButton::clicked, this, [this](bool on) {
         if (!m_syncing)
             emit autoStartRequested(on);
+    });
+    return card;
+}
+
+QWidget *SettingsPage::buildReportsCard()
+{
+    auto *card = new SettingsCard;
+    auto *body = card->body();
+
+    m_dailyReportSwitch = new SwitchButton(card);
+    auto *dailyRow = new SettingRow(QStringLiteral("显示日报"),
+                                    QStringLiteral("侧栏入口；关闭只藏入口，已保存的日报不删"),
+                                    m_dailyReportSwitch, card);
+    body->addWidget(dailyRow);
+    connect(m_dailyReportSwitch, &QAbstractButton::clicked, this, [this](bool on) {
+        if (!m_syncing)
+            m_store->setShowDailyReport(on);
+    });
+
+    body->addWidget(new Separator(card));
+
+    m_weeklyReportSwitch = new SwitchButton(card);
+    auto *weeklyRow = new SettingRow(QStringLiteral("显示周报"),
+                                     QStringLiteral("本周完成快照；关闭只藏入口，数据保留"),
+                                     m_weeklyReportSwitch, card);
+    body->addWidget(weeklyRow);
+    connect(m_weeklyReportSwitch, &QAbstractButton::clicked, this, [this](bool on) {
+        if (!m_syncing)
+            m_store->setShowWeeklyReport(on);
+    });
+
+    body->addWidget(new Separator(card));
+
+    m_monthlyReportSwitch = new SwitchButton(card);
+    auto *monthlyRow = new SettingRow(QStringLiteral("显示月报"),
+                                      QStringLiteral("本月完成快照；关闭只藏入口，数据保留"),
+                                      m_monthlyReportSwitch, card);
+    body->addWidget(monthlyRow);
+    connect(m_monthlyReportSwitch, &QAbstractButton::clicked, this, [this](bool on) {
+        if (!m_syncing)
+            m_store->setShowMonthlyReport(on);
     });
     return card;
 }
@@ -473,6 +516,12 @@ void SettingsPage::refresh()
     m_topSwitch->setChecked(settings.alwaysOnTop);
     m_autoHideSwitch->setChecked(settings.autoHide);
     m_autoStartSwitch->setChecked(settings.autoStart);
+    if (m_dailyReportSwitch)
+        m_dailyReportSwitch->setChecked(settings.showDailyReport);
+    if (m_weeklyReportSwitch)
+        m_weeklyReportSwitch->setChecked(settings.showWeeklyReport);
+    if (m_monthlyReportSwitch)
+        m_monthlyReportSwitch->setChecked(settings.showMonthlyReport);
     m_dockNone->setChecked(settings.dockSide == 0);
     m_dockLeft->setChecked(settings.dockSide == 1);
     m_dockRight->setChecked(settings.dockSide == 2);

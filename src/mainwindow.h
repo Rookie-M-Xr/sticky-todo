@@ -96,7 +96,12 @@ private:
     void openSettingsPage();
     void closeSettingsPage();
     void openDailyPage();
+    void openWeeklyPage();
+    void openMonthlyPage();
+    void openReportPage(ReportKind kind);
     void closeOverlayPage();
+    void updateReportButtons();
+    bool reportOverlayVisible() const;
     void togglePin();
     void handleDockRequest(int side);
     void handleCollapseAction();
@@ -139,7 +144,11 @@ private:
     TodoScrollView *m_todosView = nullptr;
     SettingsPage *m_settingsPage = nullptr;
     DailyReportPage *m_dailyPage = nullptr;
+    DailyReportPage *m_weeklyPage = nullptr;
+    DailyReportPage *m_monthlyPage = nullptr;
     IconButton *m_dailyButton = nullptr;
+    IconButton *m_weeklyButton = nullptr;
+    IconButton *m_monthlyButton = nullptr;
     QWidget *m_composerBar = nullptr;
     QLineEdit *m_composer = nullptr;
     DateChip *m_composerDate = nullptr;
@@ -171,6 +180,8 @@ private:
     bool m_peekExpanded = false;
     bool m_settingsVisible = false;
     bool m_dailyVisible = false;
+    bool m_weeklyVisible = false;
+    bool m_monthlyVisible = false;
     bool m_quitting = false;
     bool m_forceDockCollapse = false;
     bool m_suppressHover = false;

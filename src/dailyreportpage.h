@@ -1,5 +1,7 @@
 #pragma once
 
+#include "models.h"
+
 #include <QWidget>
 
 class DataStore;
@@ -14,8 +16,10 @@ class DailyReportPage : public QWidget
     Q_OBJECT
 
 public:
-    explicit DailyReportPage(DataStore *store, QWidget *parent = nullptr);
+    explicit DailyReportPage(DataStore *store, ReportKind kind = ReportKind::Daily,
+                             QWidget *parent = nullptr);
     void refresh();
+    ReportKind kind() const { return m_kind; }
 
 signals:
     void messageRequested(const QString &text);
@@ -26,6 +30,7 @@ private:
     void onItemChanged(QListWidgetItem *item);
 
     DataStore *m_store = nullptr;
+    ReportKind m_kind = ReportKind::Daily;
     QLabel *m_hintLabel = nullptr;
     QListWidget *m_list = nullptr;
     QPushButton *m_copyButton = nullptr;

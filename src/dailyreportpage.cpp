@@ -16,9 +16,53 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
-DailyReportPage::DailyReportPage(DataStore *store, QWidget *parent)
+namespace {
+
+QString hintFor(ReportKind kind)
+{
+    switch (kind) {
+    case ReportKind::Daily:
+        return QStringLiteral("今日完成快照（改文字不回写待办）");
+    case ReportKind::Weekly:
+        return QStringLiteral("本周完成快照（改文字不回写待办）");
+    case ReportKind::Monthly:
+        return QStringLiteral("本月完成快照（改文字不回写待办）");
+    }
+    return QString();
+}
+
+QString emptyFor(ReportKind kind)
+{
+    switch (kind) {
+    case ReportKind::Daily:
+        return QStringLiteral("今日还没有完成的待办");
+    case ReportKind::Weekly:
+        return QStringLiteral("本周还没有完成的待办");
+    case ReportKind::Monthly:
+        return QStringLiteral("本月还没有完成的待办");
+    }
+    return QString();
+}
+
+QString copiedFor(ReportKind kind)
+{
+    switch (kind) {
+    case ReportKind::Daily:
+        return QStringLiteral("已复制今日日报");
+    case ReportKind::Weekly:
+        return QStringLiteral("已复制本周周报");
+    case ReportKind::Monthly:
+        return QStringLiteral("已复制本月月报");
+    }
+    return QString();
+}
+
+} // namespace
+
+DailyReportPage::DailyReportPage(DataStore *store, ReportKind kind, QWidget *parent)
     : QWidget(parent)
     , m_store(store)
+    , m_kind(kind)
 {
     setAttribute(Qt::WA_NoSystemBackground);
     setAttribute(Qt::WA_TranslucentBackground, false);
@@ -35,7 +79,7 @@ void DailyReportPage::buildUi()
     auto *top = new QHBoxLayout;
     top->setContentsMargins(0, 0, 0, 0);
     top->setSpacing(8);
-    m_hintLabel = new QLabel(QStringLiteral("今日完成快照（改文字不回写待办）"), this);
+    m_hintLabel = new QLabel(hintFor(m_kind), this);
     m_hintLabel->setFont(Theme::uiFont(11));
     m_hintLabel->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(Theme::Muted.name()));
     m_hintLabel->setWordWrap(true);
@@ -87,12 +131,12 @@ void DailyReportPage::refresh()
 {
     if (!m_store)
         return;
-    m_store->syncDailyFromCompleted(QDate::currentDate());
+    m_store->syncReportFromCompleted(m_kind, QDate::currentDate());
     m_syncing = true;
     m_list->clear();
-    const QVector<DailySnapshot> snaps = m_store->dailySnapshots(QDate::currentDate());
+    const QVector<DailySnapshot> snaps = m_store->reportSnapshots(m_kind, QDate::currentDate());
     if (snaps.isEmpty()) {
-        auto *empty = new QListWidgetItem(QStringLiteral("今日还没有完成的待办"), m_list);
+        auto *empty = new QListWidgetItem(emptyFor(m_kind), m_list);
         empty->setFlags(empty->flags() & ~Qt::ItemIsEditable & ~Qt::ItemIsSelectable);
         empty->setForeground(Theme::Muted);
     } else {
@@ -100,7 +144,11 @@ void DailyReportPage::refresh()
             auto *item = new QListWidgetItem(snap.text, m_list);
             item->setFlags(item->flags() | Qt::ItemIsEditable | Qt::ItemIsSelectable | Qt::ItemIsEnabled);
             item->setData(Qt::UserRole, snap.id);
-            item->setToolTip(QStringLiteral("双击编辑；不回写主列表待办"));
+            if (snap.date.isValid() && m_kind != ReportKind::Daily)
+                item->setToolTip(QStringLiteral("%1 · 双击编辑；不回写主列表待办")
+                                     .arg(snap.date.toString(QStringLiteral("yyyy-MM-dd"))));
+            else
+                item->setToolTip(QStringLiteral("双击编辑；不回写主列表待办"));
         }
     }
     m_syncing = false;
@@ -113,16 +161,16 @@ void DailyReportPage::onItemChanged(QListWidgetItem *item)
     const QString id = item->data(Qt::UserRole).toString();
     if (id.isEmpty())
         return;
-    m_store->updateDailySnapshotText(id, item->text());
+    m_store->updateReportSnapshotText(m_kind, id, item->text());
 }
 
 void DailyReportPage::copyPlainText()
 {
     if (!m_store)
         return;
-    const QString text = m_store->formatDailyPlainText(QDate::currentDate());
+    const QString text = m_store->formatReportPlainText(m_kind, QDate::currentDate());
     if (QClipboard *clip = QApplication::clipboard()) {
         clip->setText(text);
-        emit messageRequested(QStringLiteral("已复制今日日报"));
+        emit messageRequested(copiedFor(m_kind));
     }
 }

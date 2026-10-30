@@ -293,12 +293,18 @@ MainWindow::MainWindow(QWidget *parent)
             m_refreshTimer->start(0);
     });
     connect(m_store, &DataStore::settingsChanged, this, [this] {
+        const AppSettings &s = m_store->settings();
+        if ((m_dailyVisible && !s.showDailyReport) || (m_weeklyVisible && !s.showWeeklyReport)
+            || (m_monthlyVisible && !s.showMonthlyReport)) {
+            closeOverlayPage();
+        }
+        updateReportButtons();
         updateHeader();
         updateTrayState();
-        const bool top = m_store->settings().alwaysOnTop;
+        const bool top = s.alwaysOnTop;
         if (top != m_lastTopMost)
             applyTopMost();
-        if (m_store->settings().autoHide && isDocked() && !m_collapsed && !m_pinned)
+        if (s.autoHide && isDocked() && !m_collapsed && !m_pinned)
             startCollapseCountdown(600);
     });
     connect(m_store, &DataStore::errorOccurred, this, [this](const QString &message) {
@@ -347,6 +353,12 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_dailyPage, &DailyReportPage::messageRequested, this, [this](const QString &text) {
         showToast(text);
     });
+    connect(m_weeklyPage, &DailyReportPage::messageRequested, this, [this](const QString &text) {
+        showToast(text);
+    });
+    connect(m_monthlyPage, &DailyReportPage::messageRequested, this, [this](const QString &text) {
+        showToast(text);
+    });
 
     connect(qApp, &QGuiApplication::applicationStateChanged, this,
             [this](Qt::ApplicationState state) {
@@ -379,6 +391,7 @@ MainWindow::MainWindow(QWidget *parent)
     scheduleMidnightRefresh();
     qApp->installNativeEventFilter(this);
     m_startupNoticesPending = true;
+    updateReportButtons();
 
     if (!loaded) {
         showToast(QStringLiteral("数据目录不可用，修改可能无法保存。"), QString(), {}, 9000);
@@ -464,6 +477,14 @@ void MainWindow::buildUi()
     m_dailyButton->setToolTip(QStringLiteral("日报"));
     topRow->addWidget(m_dailyButton, 0, Qt::AlignVCenter);
 
+    m_weeklyButton = new IconButton(AppIcon::Week, 26, 16, m_header);
+    m_weeklyButton->setToolTip(QStringLiteral("周报"));
+    topRow->addWidget(m_weeklyButton, 0, Qt::AlignVCenter);
+
+    m_monthlyButton = new IconButton(AppIcon::Month, 26, 16, m_header);
+    m_monthlyButton->setToolTip(QStringLiteral("月报"));
+    topRow->addWidget(m_monthlyButton, 0, Qt::AlignVCenter);
+
     m_settingsButton = new IconButton(AppIcon::Settings, 26, 17, m_header);
     m_settingsButton->setToolTip(QStringLiteral("设置"));
     topRow->addWidget(m_settingsButton, 0, Qt::AlignVCenter);
@@ -497,10 +518,14 @@ void MainWindow::buildUi()
         "QStackedWidget > QWidget { background: transparent; }"));
     m_todosView = new TodoScrollView(m_store, m_stack);
     m_settingsPage = new SettingsPage(m_store, m_stack);
-    m_dailyPage = new DailyReportPage(m_store, m_stack);
+    m_dailyPage = new DailyReportPage(m_store, ReportKind::Daily, m_stack);
+    m_weeklyPage = new DailyReportPage(m_store, ReportKind::Weekly, m_stack);
+    m_monthlyPage = new DailyReportPage(m_store, ReportKind::Monthly, m_stack);
     m_stack->addWidget(m_todosView);
     m_stack->addWidget(m_settingsPage);
     m_stack->addWidget(m_dailyPage);
+    m_stack->addWidget(m_weeklyPage);
+    m_stack->addWidget(m_monthlyPage);
     cardLayout->addWidget(m_stack, 1);
 
     auto *composerWrap = new QWidget(m_card);
@@ -551,6 +576,8 @@ void MainWindow::buildUi()
 
     connect(m_backButton, &QAbstractButton::clicked, this, &MainWindow::closeOverlayPage);
     connect(m_dailyButton, &QAbstractButton::clicked, this, &MainWindow::openDailyPage);
+    connect(m_weeklyButton, &QAbstractButton::clicked, this, &MainWindow::openWeeklyPage);
+    connect(m_monthlyButton, &QAbstractButton::clicked, this, &MainWindow::openMonthlyPage);
     connect(m_settingsButton, &QAbstractButton::clicked, this, &MainWindow::openSettingsPage);
     connect(m_pinButton, &QAbstractButton::clicked, this, &MainWindow::togglePin);
     connect(m_hideButton, &QAbstractButton::clicked, this, &MainWindow::minimizeToTray);
@@ -1301,6 +1328,16 @@ void MainWindow::updateHeader()
     } else if (m_dailyVisible) {
         m_titleLabel->setText(QStringLiteral("日报"));
         m_subtitleLabel->setText(dateHeadline(m_currentDate) + QStringLiteral(" · 今日完成快照"));
+    } else if (m_weeklyVisible) {
+        m_titleLabel->setText(QStringLiteral("周报"));
+        const QDate start = reportWeekStart(m_currentDate);
+        const QDate end = reportWeekEnd(m_currentDate);
+        m_subtitleLabel->setText(QStringLiteral("%1 ~ %2 · 本周完成快照")
+                                     .arg(start.toString(QStringLiteral("MM-dd")),
+                                          end.toString(QStringLiteral("MM-dd"))));
+    } else if (m_monthlyVisible) {
+        m_titleLabel->setText(QStringLiteral("月报"));
+        m_subtitleLabel->setText(reportMonthKey(m_currentDate) + QStringLiteral(" · 本月完成快照"));
     } else {
         m_titleLabel->setText(QStringLiteral("便签待办"));
         QString subtitle = dateHeadline(m_currentDate);
@@ -1310,12 +1347,11 @@ void MainWindow::updateHeader()
         m_subtitleLabel->setText(subtitle);
     }
 
-    const bool overlay = m_settingsVisible || m_dailyVisible;
+    const bool overlay = m_settingsVisible || reportOverlayVisible();
     m_backButton->setVisible(overlay);
     m_searchBox->setVisible(!overlay);
     m_settingsButton->setVisible(!overlay);
-    if (m_dailyButton)
-        m_dailyButton->setVisible(!overlay);
+    updateReportButtons();
     m_pinButton->setVisible(!overlay);
     updatePinButton();
     updateTrayState();
@@ -1328,6 +1364,10 @@ void MainWindow::updateHeader()
         setWindowTitle(QStringLiteral("便签待办 · 设置"));
     else if (m_dailyVisible)
         setWindowTitle(QStringLiteral("便签待办 · 日报"));
+    else if (m_weeklyVisible)
+        setWindowTitle(QStringLiteral("便签待办 · 周报"));
+    else if (m_monthlyVisible)
+        setWindowTitle(QStringLiteral("便签待办 · 月报"));
     else
         setWindowTitle(QStringLiteral("便签待办 · %1 项待办").arg(pending));
 }
@@ -1336,7 +1376,7 @@ void MainWindow::updatePinButton()
 {
     if (!m_pinButton)
         return;
-    m_pinButton->setVisible(!m_settingsVisible && !m_dailyVisible);
+    m_pinButton->setVisible(!m_settingsVisible && !reportOverlayVisible());
     m_pinButton->setIconColor(m_pinned ? Theme::Accent : Theme::InkSoft);
     if (!isDocked()) {
         m_pinButton->setToolTip(QStringLiteral("贴边并固定展开（点击后停靠屏幕边缘）"));
@@ -1779,8 +1819,9 @@ void MainWindow::openSettingsPage()
         m_composer->clearFocus();
     if (m_settingsVisible)
         return;
-    if (m_dailyVisible)
-        m_dailyVisible = false;
+    m_dailyVisible = false;
+    m_weeklyVisible = false;
+    m_monthlyVisible = false;
     if (m_collapsed)
         expandFromTab(false);
     stopCollapseCountdown();
@@ -1800,36 +1841,88 @@ void MainWindow::closeSettingsPage()
     closeOverlayPage();
 }
 
+bool MainWindow::reportOverlayVisible() const
+{
+    return m_dailyVisible || m_weeklyVisible || m_monthlyVisible;
+}
+
+void MainWindow::updateReportButtons()
+{
+    const bool overlay = m_settingsVisible || reportOverlayVisible();
+    const AppSettings &settings = m_store ? m_store->settings() : AppSettings();
+    if (m_dailyButton)
+        m_dailyButton->setVisible(!overlay && settings.showDailyReport);
+    if (m_weeklyButton)
+        m_weeklyButton->setVisible(!overlay && settings.showWeeklyReport);
+    if (m_monthlyButton)
+        m_monthlyButton->setVisible(!overlay && settings.showMonthlyReport);
+}
+
 void MainWindow::openDailyPage()
+{
+    openReportPage(ReportKind::Daily);
+}
+
+void MainWindow::openWeeklyPage()
+{
+    openReportPage(ReportKind::Weekly);
+}
+
+void MainWindow::openMonthlyPage()
+{
+    openReportPage(ReportKind::Monthly);
+}
+
+void MainWindow::openReportPage(ReportKind kind)
 {
     if (m_composer)
         m_composer->clearFocus();
-    if (m_dailyVisible)
+    DailyReportPage *page = nullptr;
+    bool *flag = nullptr;
+    switch (kind) {
+    case ReportKind::Daily:
+        page = m_dailyPage;
+        flag = &m_dailyVisible;
+        break;
+    case ReportKind::Weekly:
+        page = m_weeklyPage;
+        flag = &m_weeklyVisible;
+        break;
+    case ReportKind::Monthly:
+        page = m_monthlyPage;
+        flag = &m_monthlyVisible;
+        break;
+    }
+    if (!page || !flag)
         return;
-    if (m_settingsVisible)
-        m_settingsVisible = false;
+    if (*flag)
+        return;
+    m_settingsVisible = false;
+    m_dailyVisible = false;
+    m_weeklyVisible = false;
+    m_monthlyVisible = false;
     if (m_collapsed)
         expandFromTab(false);
     stopCollapseCountdown();
-    m_dailyVisible = true;
-    m_stack->setCurrentWidget(m_dailyPage);
-    if (m_dailyPage)
-        m_dailyPage->refresh();
+    *flag = true;
+    m_stack->setCurrentWidget(page);
+    page->refresh();
     if (m_composerBar && m_composerBar->parentWidget())
         m_composerBar->parentWidget()->hide();
     if (m_snackbar)
         m_snackbar->dismiss();
     updateHeader();
-    if (m_dailyPage)
-        m_dailyPage->setFocus(Qt::OtherFocusReason);
+    page->setFocus(Qt::OtherFocusReason);
 }
 
 void MainWindow::closeOverlayPage()
 {
-    if (!m_settingsVisible && !m_dailyVisible)
+    if (!m_settingsVisible && !reportOverlayVisible())
         return;
     m_settingsVisible = false;
     m_dailyVisible = false;
+    m_weeklyVisible = false;
+    m_monthlyVisible = false;
     m_stack->setCurrentWidget(m_todosView);
     if (m_composerBar && m_composerBar->parentWidget())
         m_composerBar->parentWidget()->show();
@@ -2252,8 +2345,14 @@ void MainWindow::handleDelete(const QString &id)
 void MainWindow::handleCompletion(const QString &id, bool completed)
 {
     m_store->setCompleted(id, completed);
-    if (completed && m_dailyVisible && m_dailyPage)
-        m_dailyPage->refresh();
+    if (completed) {
+        if (m_dailyVisible && m_dailyPage)
+            m_dailyPage->refresh();
+        if (m_weeklyVisible && m_weeklyPage)
+            m_weeklyPage->refresh();
+        if (m_monthlyVisible && m_monthlyPage)
+            m_monthlyPage->refresh();
+    }
 }
 
 void MainWindow::handleTextEdited(const QString &id, const QString &text)

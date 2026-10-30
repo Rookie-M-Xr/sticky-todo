@@ -93,6 +93,30 @@ void drawAppIcon(QPainter &painter, const QRectF &rect, AppIcon icon, const QCol
         painter.drawEllipse(QPointF(8.0, 15.3), 0.85, 0.85);
         painter.drawEllipse(QPointF(12.0, 15.3), 0.85, 0.85);
         break;
+    case AppIcon::Week:
+        painter.drawRoundedRect(QRectF(4.6, 6.0, 14.8, 11.4), 2.2, 2.2);
+        painter.drawLine(QPointF(4.6, 9.3), QPointF(19.4, 9.3));
+        painter.drawLine(QPointF(8.0, 4.3), QPointF(8.0, 7.2));
+        painter.drawLine(QPointF(12.0, 4.3), QPointF(12.0, 7.2));
+        painter.drawLine(QPointF(7.2, 12.0), QPointF(16.8, 12.0));
+        painter.drawLine(QPointF(7.2, 14.6), QPointF(14.2, 14.6));
+        break;
+    case AppIcon::Month: {
+        painter.drawRoundedRect(QRectF(4.6, 5.4, 14.8, 12.2), 2.2, 2.2);
+        painter.drawLine(QPointF(4.6, 8.8), QPointF(19.4, 8.8));
+        painter.drawLine(QPointF(8.0, 3.8), QPointF(8.0, 6.8));
+        painter.drawLine(QPointF(12.0, 3.8), QPointF(12.0, 6.8));
+        painter.setBrush(color);
+        painter.setPen(Qt::NoPen);
+        for (int row = 0; row < 2; ++row) {
+            for (int col = 0; col < 3; ++col) {
+                painter.drawEllipse(QPointF(7.2 + col * 3.8, 11.4 + row * 3.0), 0.8, 0.8);
+            }
+        }
+        painter.setPen(pen);
+        painter.setBrush(Qt::NoBrush);
+        break;
+    }
     case AppIcon::Pin:
         painter.drawEllipse(QPointF(10, 7.1), 2.5, 2.5);
         painter.drawLine(QPointF(10, 9.6), QPointF(10, 15.7));

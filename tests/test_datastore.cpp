@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QDate>
 #include <QDateTime>
+#include <QTime>
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
@@ -345,6 +346,109 @@ void testDailySnapshots()
         pass("daily snapshots + edit isolation + persist");
 }
 
+void testWeeklyMonthlySnapshots()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "period: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    const QDate today = QDate::currentDate();
+    const QDate weekStart = reportWeekStart(today);
+    QString midWeekId;
+    QString monthId;
+    {
+        DataStore store;
+        expect(store.load(), "period: load");
+        TodoItem mid;
+        mid.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        mid.text = QStringLiteral("done midweek");
+        mid.createdAt = QDateTime::currentDateTime();
+        mid.updatedAt = mid.createdAt;
+        mid.completed = true;
+        mid.completedAt = QDateTime(weekStart.addDays(2), QTime(10, 0));
+        midWeekId = mid.id;
+        expect(store.restoreTodo(mid), "period: restore midweek");
+
+        TodoItem monthItem;
+        monthItem.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        monthItem.text = QStringLiteral("done this month");
+        monthItem.createdAt = QDateTime::currentDateTime();
+        monthItem.updatedAt = monthItem.createdAt;
+        monthItem.completed = true;
+        // First day of month, but outside current week if possible; still in month.
+        QDate monthDay(today.year(), today.month(), 1);
+        if (monthDay >= weekStart && monthDay <= reportWeekEnd(today))
+            monthDay = today; // still valid month membership
+        monthItem.completedAt = QDateTime(monthDay, QTime(9, 0));
+        monthId = monthItem.id;
+        expect(store.restoreTodo(monthItem), "period: restore month");
+
+        expect(store.syncWeeklyFromCompleted(today) >= 1, "period: week sync adds");
+        const QVector<DailySnapshot> week = store.weeklySnapshots(today);
+        expect(!week.isEmpty(), "period: week nonempty");
+        bool foundMid = false;
+        for (const DailySnapshot &snap : week) {
+            if (snap.sourceTodoId == midWeekId)
+                foundMid = true;
+        }
+        expect(foundMid, "period: midweek in week report");
+
+        expect(store.syncMonthlyFromCompleted(today) >= 1, "period: month sync adds");
+        const QVector<DailySnapshot> month = store.monthlySnapshots(today);
+        expect(!month.isEmpty(), "period: month nonempty");
+
+        // Prefer editing the midweek snapshot when present.
+        QString weekSnapId = week.first().id;
+        for (const DailySnapshot &snap : week) {
+            if (snap.sourceTodoId == midWeekId) {
+                weekSnapId = snap.id;
+                break;
+            }
+        }
+        expect(store.updateReportSnapshotText(ReportKind::Weekly, weekSnapId, QStringLiteral("edited week")),
+               "period: edit week");
+        bool todoUnchanged = false;
+        for (const TodoItem &item : store.todos()) {
+            if (item.id == midWeekId) {
+                todoUnchanged = (item.text == QStringLiteral("done midweek"));
+                break;
+            }
+        }
+        expect(todoUnchanged, "period: week edit does not write back todo");
+
+        const QString plain = store.formatWeeklyPlainText(today);
+        expect(plain.contains(QStringLiteral("周报")), "period: week plain title");
+        expect(plain.contains(QStringLiteral("edited week")) || plain.contains(QStringLiteral("done midweek"))
+                   || plain.contains(QStringLiteral("done this month")),
+               "period: week plain has content");
+
+        // Visibility toggles persist and do not wipe report files
+        store.setShowWeeklyReport(false);
+        store.setShowMonthlyReport(false);
+        expect(!store.settings().showWeeklyReport, "period: weekly hidden");
+        expect(store.flush(), "period: flush");
+        expect(QFile::exists(store.weeklyReportsPath()), "period: weekly file kept");
+        expect(QFile::exists(store.monthlyReportsPath()), "period: monthly file kept");
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "period-reload: load");
+        expect(!store.settings().showWeeklyReport, "period-reload: weekly still hidden");
+        expect(!store.settings().showMonthlyReport, "period-reload: monthly still hidden");
+        expect(store.settings().showDailyReport, "period-reload: daily default on");
+        expect(!store.weeklySnapshots(today).isEmpty(), "period-reload: week data kept while hidden");
+        expect(!store.monthlySnapshots(today).isEmpty(), "period-reload: month data kept while hidden");
+        store.setShowWeeklyReport(true);
+        expect(store.settings().showWeeklyReport, "period-reload: weekly re-enabled");
+    }
+
+    if (g_failed == before)
+        pass("weekly/monthly snapshots + visibility persist");
+}
+
 void testArchiveExpired()
 {
     const int before = g_failed;
@@ -408,6 +512,7 @@ int main(int argc, char *argv[])
     testImmediatePersistAndIsolation();
     testRetentionPurge();
     testDailySnapshots();
+    testWeeklyMonthlySnapshots();
     testArchiveExpired();
 
     if (g_failed != 0) {

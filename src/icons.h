@@ -16,6 +16,8 @@ enum class AppIcon {
     ChevronDown,
     ChevronRight,
     Calendar,
+    Week,
+    Month,
     Pin,
     Check,
     Undo,

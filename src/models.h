@@ -35,6 +35,17 @@ struct DailySnapshot {
     static DailySnapshot fromJson(const QJsonObject &object, bool *ok = nullptr);
 };
 
+enum class ReportKind {
+    Daily,
+    Weekly,
+    Monthly
+};
+
+QString reportWeekKey(QDate day);
+QString reportMonthKey(QDate day);
+QDate reportWeekStart(QDate day);
+QDate reportWeekEnd(QDate day);
+
 enum class GroupId {
 
     Overdue,

@@ -115,6 +115,35 @@ DailySnapshot DailySnapshot::fromJson(const QJsonObject &object, bool *ok)
     return item;
 }
 
+QString reportWeekKey(QDate day)
+{
+    if (!day.isValid())
+        day = QDate::currentDate();
+    int year = 0;
+    const int week = day.weekNumber(&year);
+    return QStringLiteral("%1-W%2").arg(year).arg(week, 2, 10, QChar(u'0'));
+}
+
+QString reportMonthKey(QDate day)
+{
+    if (!day.isValid())
+        day = QDate::currentDate();
+    return day.toString(QStringLiteral("yyyy-MM"));
+}
+
+QDate reportWeekStart(QDate day)
+{
+    if (!day.isValid())
+        day = QDate::currentDate();
+    // Qt: Monday=1 .. Sunday=7 — calendar week Mon–Sun.
+    return day.addDays(1 - day.dayOfWeek());
+}
+
+QDate reportWeekEnd(QDate day)
+{
+    return reportWeekStart(day).addDays(6);
+}
+
 const QVector<GroupInfo> &allGroups()
 {
     static const QVector<GroupInfo> groups = {

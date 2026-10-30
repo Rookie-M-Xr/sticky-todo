@@ -30,6 +30,7 @@ signals:
 private:
     void buildUi();
     QWidget *buildGeneralCard();
+    QWidget *buildReportsCard();
     QWidget *buildWindowCard();
     QWidget *buildDataCard();
     QWidget *buildAboutCard();
@@ -41,6 +42,9 @@ private:
     SwitchButton *m_topSwitch = nullptr;
     SwitchButton *m_autoHideSwitch = nullptr;
     SwitchButton *m_autoStartSwitch = nullptr;
+    SwitchButton *m_dailyReportSwitch = nullptr;
+    SwitchButton *m_weeklyReportSwitch = nullptr;
+    SwitchButton *m_monthlyReportSwitch = nullptr;
     QPushButton *m_dockNone = nullptr;
     QPushButton *m_dockLeft = nullptr;
     QPushButton *m_dockRight = nullptr;
