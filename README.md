@@ -89,9 +89,13 @@ $env:STICKY_TODO_DATA_DIR = "$PWD\testdata"
 | `test` | 测试 |
 | `refactor` | 重构（无行为变化） |
 
+有对应 TR（GitHub Issue）时在说明里关联，便于跟踪。能直接关单的可用 GitHub 关键字 `Fixes #n`（英文，便于自动关闭）。
+
 示例：
 
-- `fix: 修复多屏贴边后屏名未更新`
+- `fix: 修复多屏贴边回跳（TR #7）`
+- `feat: 日报快照与一键复制（TR #2）`
+- `fix: 修复多屏贴边回跳（TR #7）`（正文另起一行写 `Fixes #7` 可自动关单）
 - `docs: README 去掉本机绝对路径`
 - `chore: 构建脚本改为仅使用环境变量`
 
