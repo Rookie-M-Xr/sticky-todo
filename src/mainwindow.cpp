@@ -510,7 +510,7 @@ void MainWindow::buildUi()
     m_closeButton = new IconButton(AppIcon::Close, 26, 16, m_header);
     m_closeButton->setIconColor(Theme::InkSoft);
     m_closeButton->setHoverColor(QColor(188, 103, 79, 34));
-    m_closeButton->setToolTip(QStringLiteral("完全退出 Sticky Todo"));
+    m_closeButton->setToolTip(QStringLiteral("隐藏到托盘（程序继续运行）"));
     topRow->addWidget(m_closeButton, 0, Qt::AlignVCenter);
 
     headerLayout->addLayout(topRow);
@@ -595,7 +595,7 @@ void MainWindow::buildUi()
     connect(m_settingsButton, &QAbstractButton::clicked, this, &MainWindow::openSettingsPage);
     connect(m_pinButton, &QAbstractButton::clicked, this, &MainWindow::togglePin);
     connect(m_hideButton, &QAbstractButton::clicked, this, &MainWindow::minimizeToTray);
-    connect(m_closeButton, &QAbstractButton::clicked, this, &MainWindow::quitApplication);
+    connect(m_closeButton, &QAbstractButton::clicked, this, &MainWindow::hideToTray);
     connect(m_addButton, &QAbstractButton::clicked, this, &MainWindow::submitComposer);
     connect(m_composer, &QLineEdit::returnPressed, this, &MainWindow::submitComposer);
     connect(m_composer, &QLineEdit::textChanged, this, [this](const QString &text) {
@@ -1033,11 +1033,10 @@ void MainWindow::closeEvent(QCloseEvent *event)
         event->accept();
         return;
     }
-    // Close always means quit — never hide-to-tray. When the tray is a stub
-    // (Linux) or unavailable, swallowing a dismiss looks like the first close
-    // was ignored; route straight to save+quit instead.
+    // With tray: X hides like minimize (—). Without tray (Linux stub / #4):
+    // hideToTray() already routes to save+quit so the first dismiss exits.
     event->ignore();
-    quitApplication();
+    hideToTray();
 }
 
 void MainWindow::enterEvent(QEnterEvent *event)
@@ -1470,6 +1469,13 @@ void MainWindow::updateTrayState()
         } else {
             // Linux stub / no tray: hide routes to save+quit.
             m_hideButton->setToolTip(QStringLiteral("系统托盘不可用：将保存并退出"));
+        }
+    }
+    if (m_closeButton) {
+        if (WinUtils::trayAvailable()) {
+            m_closeButton->setToolTip(QStringLiteral("隐藏到托盘；真正退出请用托盘菜单"));
+        } else {
+            m_closeButton->setToolTip(QStringLiteral("系统托盘不可用：将保存并退出"));
         }
     }
     if (m_trayAutoStartAction) {
