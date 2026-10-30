@@ -2190,7 +2190,9 @@ void MainWindow::hideToTray()
         m_trayInstalled = WinUtils::installTrayIcon(this, trayImage(), trayTipText());
     if (!m_trayInstalled) {
         // Tray shell exists but icon install failed (e.g. low integrity on Win).
-        showToast(QStringLiteral("系统托盘不可用，便签将保持显示。"));
+        // No tray menu "退出" path — save+quit so X/— never strand the user.
+        // Aligns with button tooltips: 系统托盘不可用：将保存并退出.
+        quitApplication();
         return;
     }
     if (!m_store->flush()) {
