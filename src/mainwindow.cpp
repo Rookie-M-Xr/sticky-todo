@@ -653,10 +653,12 @@ QScreen *MainWindow::screenByName(const QString &name) const
 
 QScreen *MainWindow::screenForWindow() const
 {
-    QScreen *screen = screenByName(m_screenName);
+    // Prefer geometry over the cached name so multi-monitor drag/dock
+    // follows the window's current screen instead of a stale m_screenName.
+    QScreen *screen = QGuiApplication::screenAt(frameGeometry().center());
     if (screen)
         return screen;
-    screen = QGuiApplication::screenAt(frameGeometry().center());
+    screen = screenByName(m_screenName);
     if (screen)
         return screen;
     return QGuiApplication::primaryScreen();
@@ -748,11 +750,17 @@ void MainWindow::reapplyDockGeometry()
     if (m_restoringDock || m_animating || m_dragActive || m_resizing || m_tabDragActive)
         return;
     if (isDocked() && !m_collapsed && isVisible()) {
-        QScreen *screen = screenForWindow();
+        // Geometry-first: do not re-dock onto a stale named screen when the
+        // window already sits on another monitor.
+        QScreen *screen = QGuiApplication::screenAt(frameGeometry().center());
+        if (!screen)
+            screen = screenForWindow();
         const QSize size = m_expandedWindowRect.isValid()
                                ? m_expandedWindowRect.size()
                                : QSize(kDefaultWidth, kDefaultHeight);
         if (screen) {
+            if (m_screenName != screen->name())
+                m_screenName = screen->name();
             const QRect expected = dockedRectFor(size, screen, m_dockSide);
             if (geometry() != expected) {
                 m_restoringDock = true;
@@ -1051,11 +1059,18 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             m_dragOffset = global - frameGeometry().topLeft();
         }
 
-        QScreen *screen = QGuiApplication::screenAt(global);
-        if (!screen)
-            screen = screenForWindow();
-        const QRect avail = screen ? screen->availableGeometry()
-                                   : QRect(0, 0, 1920, 1080);
+        // Clamp against the union of all screens so the window can cross
+        // monitors; a single screenAt() box traps the drag on one display.
+        QRect avail;
+        for (QScreen *s : QGuiApplication::screens())
+            avail = avail.united(s->availableGeometry());
+        if (!avail.isValid()) {
+            QScreen *screen = QGuiApplication::screenAt(global);
+            if (!screen)
+                screen = screenForWindow();
+            avail = screen ? screen->availableGeometry()
+                           : QRect(0, 0, 1920, 1080);
+        }
         QPoint target = global - m_dragOffset;
         const int minX = avail.left() - qMax(60, width() - 120);
         const int maxX = avail.right() - 120;
@@ -1632,11 +1647,16 @@ void MainWindow::finishDrag()
     if (!isVisible())
         return;
 
-    QScreen *screen = QGuiApplication::screenAt(QCursor::pos());
+    QScreen *screen = QGuiApplication::screenAt(frameGeometry().center());
+    if (!screen)
+        screen = QGuiApplication::screenAt(QCursor::pos());
     if (!screen)
         screen = screenForWindow();
     if (!screen)
         return;
+    // Persist the snap screen before animate/save so dock reapply cannot
+    // pull the window back onto a stale m_screenName monitor.
+    m_screenName = screen->name();
     const QRect avail = screen->availableGeometry();
     const QRect current = geometry();
     const int leftGap = qAbs(current.left() - avail.left());
@@ -1797,11 +1817,14 @@ void MainWindow::handleDockRequest(int side)
     if (side < 0 || side > 2)
         return;
     stopCollapseCountdown();
-    QScreen *screen = screenForWindow();
+    QScreen *screen = QGuiApplication::screenAt(frameGeometry().center());
+    if (!screen)
+        screen = screenForWindow();
     if (!screen)
         screen = QGuiApplication::primaryScreen();
     if (!screen)
         return;
+    m_screenName = screen->name();
 
     QSize size = m_expandedWindowRect.size();
     if (!size.isValid())
