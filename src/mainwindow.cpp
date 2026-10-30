@@ -45,9 +45,11 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+#ifdef Q_OS_WIN
 #define NOMINMAX
 #include <windows.h>
 #include <shellapi.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -428,7 +430,11 @@ void MainWindow::buildUi()
     auto *cardLayout = new QVBoxLayout(m_card);
     cardLayout->setContentsMargins(0, 0, 0, 0);
     cardLayout->setSpacing(0);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
     cardLayout->setSizeConstraints(QLayout::SetNoConstraint, QLayout::SetNoConstraint);
+#else
+    cardLayout->setSizeConstraint(QLayout::SetNoConstraint);
+#endif
 
     m_header = new QWidget(m_card);
     m_header->setAttribute(Qt::WA_NoSystemBackground);
@@ -1268,6 +1274,12 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 
 bool MainWindow::nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result)
 {
+#ifndef Q_OS_WIN
+    Q_UNUSED(eventType);
+    Q_UNUSED(message);
+    Q_UNUSED(result);
+    return false;
+#else
     if (eventType != "windows_generic_MSG" || !message)
         return false;
 
@@ -1309,6 +1321,7 @@ bool MainWindow::nativeEventFilter(const QByteArray &eventType, void *message, q
             m_store->flush();
     }
     return false;
+#endif
 }
 
 void MainWindow::updateHeader()

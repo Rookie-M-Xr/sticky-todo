@@ -109,3 +109,18 @@ $env:STICKY_TODO_DATA_DIR = "$PWD\testdata"
 - JSON + QSaveFile 原子写入、`.bak` 备份、损坏文件保留。
 - 便携数据目录：程序同级 `config`，不写固定 C 盘路径。
 - 6 个 Q_OBJECT 头文件必须全部 moc，否则会出现 `undefined reference to ...` 链接错误。
+
+## Linux 可搬运包（TR #5）
+
+在 Linux x86_64 上用 aqt / 官方 Qt 的 `gcc_64` 前缀编一份可解压即跑的包（自带 Qt 运行库，不依赖编包机绝对路径）：
+
+```bash
+export STICKY_QT_DIR=/path/to/Qt/6.x.y/gcc_64
+./build_linux.sh
+# 可选：STICKY_LINUX_TAR=1 ./build_linux.sh   # 额外打 StickyTodo-linux-x86_64.tar.gz
+```
+
+默认产物目录：`../sticky-todo-linux/`（可用 `STICKY_LINUX_OUT` 改）。运行见该目录内 `README.md` / `./run.sh`。
+
+Linux 使用 `src/winutils_linux.cpp` 代替 Windows 的 `winutils.cpp`（托盘/开机自启为 stub）。`src/mainwindow.cpp` 在非 Windows 下跳过 Win32 头与 `nativeEventFilter` 实现。
+

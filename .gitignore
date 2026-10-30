@@ -31,3 +31,8 @@ Thumbs.db
 Desktop.ini
 *.tmp
 *.log
+
+# Linux build intermediates / local package trees
+/build-linux/
+/StickyTodo-linux*/
+*.tar.gz
