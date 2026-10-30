@@ -13,7 +13,7 @@ unsigned int activationMessage();
 
 void applyCommandLineDataDir();
 
-bool setAutoStart(bool enabled, QString *errorMessage);
+bool setAutoStart(bool enabled, QString *errorMessage, const QString &dataDir = QString());
 bool autoStartEnabled(QString *command = nullptr);
 
 void setTopMost(QWidget *widget, bool on);

@@ -132,6 +132,53 @@ void testCorruptionRecovery()
         pass("corruption recovery from .bak");
 }
 
+
+void testImmediatePersistAndIsolation()
+{
+    const int before = g_failed;
+    const QString dirA = makeDataDir();
+    expect(!dirA.isEmpty(), "isolate: dir A");
+    if (dirA.isEmpty())
+        return;
+
+    QString id;
+    {
+        DataStore store;
+        expect(store.load(), "isolate: load A");
+        id = store.addTodo(QStringLiteral("only-in-A"), QDate::currentDate());
+        expect(!id.isEmpty(), "isolate: addTodo");
+        // delayMs==0 now writes before returning; must exist without flush().
+        expect(QFile::exists(QDir(dirA).filePath(QStringLiteral("todos.json"))),
+               "isolate: todos.json after addTodo (immediate save)");
+    }
+
+    const QString dirB = makeDataDir();
+    expect(!dirB.isEmpty(), "isolate: dir B");
+    if (dirB.isEmpty())
+        return;
+
+    {
+        DataStore store;
+        expect(store.load(), "isolate: load B");
+        expect(store.todos().isEmpty(), "isolate: B starts empty");
+        expect(store.addTodo(QStringLiteral("only-in-B"), QDate()).size() > 0, "isolate: add in B");
+        expect(store.flush(), "isolate: flush B");
+    }
+
+    qputenv("STICKY_TODO_DATA_DIR", QDir::toNativeSeparators(dirA).toUtf8());
+    {
+        DataStore store;
+        expect(store.load(), "isolate: reload A");
+        expect(store.todos().size() == 1, "isolate: A still has one todo");
+        const TodoItem *item = store.findTodo(id);
+        expect(item != nullptr && item->text == QStringLiteral("only-in-A"),
+               "isolate: A content unchanged by B");
+    }
+
+    if (g_failed == before)
+        pass("immediate persist + data-dir isolation");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -141,6 +188,7 @@ int main(int argc, char *argv[])
 
     testRoundTrip();
     testCorruptionRecovery();
+    testImmediatePersistAndIsolation();
 
     if (g_failed != 0) {
         std::fprintf(stderr, "%d assertion(s) failed\n", g_failed);

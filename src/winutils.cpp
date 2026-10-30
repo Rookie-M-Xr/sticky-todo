@@ -201,13 +201,33 @@ void reinstallCachedTrayIcon()
     SetWindowTextW(g_trayHwnd, L"StickyTodoTray OK");
 }
 
-QString startupCommand()
+bool isEphemeralDataDir(const QString &dataDir)
+{
+    const QString cleaned = QDir::cleanPath(dataDir);
+    if (cleaned.isEmpty())
+        return true;
+    const QString tempRoot = QDir::cleanPath(QDir::tempPath());
+    if (cleaned.compare(tempRoot, Qt::CaseInsensitive) == 0)
+        return true;
+    const QString prefix = tempRoot + QLatin1Char('/');
+    if (cleaned.startsWith(prefix, Qt::CaseInsensitive))
+        return true;
+    const QString native = QDir::toNativeSeparators(cleaned);
+    const QString nativeTemp = QDir::toNativeSeparators(tempRoot) + QDir::separator();
+    if (native.startsWith(nativeTemp, Qt::CaseInsensitive))
+        return true;
+    return false;
+}
+
+QString startupCommand(const QString &dataDir)
 {
     const QString path = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
     QString command = QStringLiteral("\"%1\"").arg(path);
-    const QString dataDir = qEnvironmentVariable("STICKY_TODO_DATA_DIR").trimmed();
-    if (!dataDir.isEmpty())
-        command += QStringLiteral(" --data-dir \"%1\"").arg(QDir::toNativeSeparators(dataDir));
+    QString dir = dataDir.trimmed();
+    if (dir.isEmpty())
+        dir = qEnvironmentVariable("STICKY_TODO_DATA_DIR").trimmed();
+    if (!dir.isEmpty())
+        command += QStringLiteral(" --data-dir \"%1\"").arg(QDir::toNativeSeparators(dir));
     return command;
 }
 
@@ -291,7 +311,7 @@ unsigned int activationMessage()
     return message;
 }
 
-bool setAutoStart(bool enabled, QString *errorMessage)
+bool setAutoStart(bool enabled, QString *errorMessage, const QString &dataDir)
 {
     if (errorMessage)
         errorMessage->clear();
@@ -325,7 +345,20 @@ bool setAutoStart(bool enabled, QString *errorMessage)
         return false;
     }
 
-    const QString desired = startupCommand();
+    // Never bake a Temp/smoke --data-dir into HKCU Run: that is how a one-off
+    // test launch made subsequent boots read/write an empty (or deleted) folder
+    // while the real todos stayed in the portable config next to the package.
+    if (isEphemeralDataDir(dataDir.isEmpty()
+                               ? qEnvironmentVariable("STICKY_TODO_DATA_DIR")
+                               : dataDir)) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral(
+                "数据目录位于临时文件夹，未写入开机启动项，以免启动后读写空配置");
+        }
+        return false;
+    }
+
+    const QString desired = startupCommand(dataDir);
     QString existing;
     if (queryAutoStart(&existing) == ERROR_SUCCESS && existing == desired)
         return true;

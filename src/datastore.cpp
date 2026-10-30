@@ -343,13 +343,23 @@ void DataStore::setWindowState(const QRect &rect, const QString &screenName, int
 void DataStore::scheduleTodosSave(int delayMs)
 {
     m_todosDirty = true;
-    m_todoSaveTimer.start(qMax(0, delayMs));
+    if (delayMs <= 0) {
+        m_todoSaveTimer.stop();
+        saveTodosNow();
+        return;
+    }
+    m_todoSaveTimer.start(delayMs);
 }
 
 void DataStore::scheduleSettingsSave(int delayMs)
 {
     m_settingsDirty = true;
-    m_settingsSaveTimer.start(qMax(0, delayMs));
+    if (delayMs <= 0) {
+        m_settingsSaveTimer.stop();
+        saveSettingsNow();
+        return;
+    }
+    m_settingsSaveTimer.start(delayMs);
 }
 
 void DataStore::saveTodosNow()

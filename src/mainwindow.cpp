@@ -1343,7 +1343,9 @@ void MainWindow::applyAutoStart(bool enabled, bool quiet)
         return;
     }
     QString error;
-    const bool ok = WinUtils::setAutoStart(enabled, &error);
+    // Pin the Run key to this session's resolved data dir (portable config),
+    // not whatever Temp path a smoke test last exported via --data-dir.
+    const bool ok = WinUtils::setAutoStart(enabled, &error, m_store->dataDir());
     if (ok) {
         m_store->setAutoStartPreference(enabled);
         if (!quiet)
