@@ -2,13 +2,16 @@
 #include "winutils.h"
 
 #include <QApplication>
+#include <QBitmap>
 #include <QEvent>
 #include <QFontDatabase>
-#include <QPainterPath>
+#include <QImage>
+#include <QPainter>
 #include <QRegion>
 #include <QStringList>
 #include <QStyleHints>
 #include <QToolTip>
+#include <QTransform>
 #include <QWidget>
 
 namespace {
@@ -26,6 +29,7 @@ QString firstAvailable(const QStringList &candidates)
 }
 
 constexpr int kMenuRadius = 12;
+const QColor kMenuFill(255, 253, 244); // #fffdf4
 
 } // namespace
 
@@ -208,28 +212,97 @@ void polishPopupWidget(QWidget *widget)
     widget->setAttribute(Qt::WA_StyledBackground, true);
 }
 
+QRegion roundedRectRegion(const QSize &size, int radius)
+{
+    const int w = size.width();
+    const int h = size.height();
+    QRegion region(QRect(QPoint(0, 0), size));
+    if (w < 4 || h < 4)
+        return region;
+    const int r = qBound(1, radius, qMin(w, h) / 2);
+
+    // Punch each AABB corner: square minus the quarter-circle that belongs
+    // inside the 12px path. toFillPolygon() was coarse and only cleared TL.
+    auto punch = [&](int sx, int sy, int ex, int ey) {
+        region -= QRegion(QRect(sx, sy, r, r))
+            - QRegion(QRect(ex, ey, 2 * r, 2 * r), QRegion::Ellipse);
+    };
+    punch(0, 0, 0, 0);
+    punch(w - r, 0, w - 2 * r, 0);
+    punch(0, h - r, 0, h - 2 * r);
+    punch(w - r, h - r, w - 2 * r, h - 2 * r);
+
+    const QPoint aabb[] = {
+        {0, 0}, {w - 1, 0}, {0, h - 1}, {w - 1, h - 1},
+    };
+    for (const QPoint &corner : aabb)
+        region -= QRegion(QRect(corner, QSize(1, 1)));
+    return region;
+}
+
+QRegion rasterRoundedMask(const QSize &size, int radius, qreal dpr)
+{
+    const qreal scale = qMax(qreal(1), dpr);
+    const int wPx = qMax(1, qRound(size.width() * scale));
+    const int hPx = qMax(1, qRound(size.height() * scale));
+    QImage image(wPx, hPx, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    {
+        QPainter painter(&image);
+        painter.setRenderHint(QPainter::Antialiasing, false);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(Qt::white);
+        painter.scale(scale, scale);
+        painter.drawRoundedRect(QRectF(0, 0, size.width(), size.height()), radius, radius);
+    }
+    QRegion region(QBitmap::fromImage(image.createAlphaMask()));
+    if (!qFuzzyCompare(scale, qreal(1))) {
+        QTransform toLogical;
+        toLogical.scale(qreal(1) / scale, qreal(1) / scale);
+        region = toLogical.map(region);
+    }
+    return region;
+}
+
 void applyMenuRoundedMask(QWidget *menu)
 {
-    const QRect rect = menu->rect();
-    if (rect.width() < 2 || rect.height() < 2)
+    const QSize size = menu->size();
+    if (size.width() < 4 || size.height() < 4)
         return;
-    QPainterPath path;
-    path.addRoundedRect(QRectF(rect), kMenuRadius, kMenuRadius);
-    menu->setMask(QRegion(path.toFillPolygon().toPolygon()));
+    // Raster at device pixels (smoother HiDPI curve) and intersect the
+    // geometric 4-corner punch so AABB samples cannot stay paper.
+    QRegion mask = rasterRoundedMask(size, kMenuRadius, menu->devicePixelRatioF());
+    mask &= roundedRectRegion(size, kMenuRadius);
+    menu->setMask(mask);
+}
+
+void paintMenuPaper(QWidget *menu)
+{
+    if (menu->width() < 2 || menu->height() < 2)
+        return;
+    QPainter painter(menu);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(kMenuFill);
+    painter.drawRoundedRect(QRectF(menu->rect()), kMenuRadius, kMenuRadius);
 }
 
 void polishMenuWindow(QWidget *menu)
 {
     polishPopupWidget(menu);
-    menu->setAutoFillBackground(false);
-    menu->setAttribute(Qt::WA_TranslucentBackground, true);
-    menu->setAttribute(Qt::WA_NoSystemBackground, true);
+    // Translucent + QSS fill is glass on Win Fusion. Opaque palette/auto-fill
+    // plus a painted rounded rect keeps the body paper; the mask punches corners.
+    menu->setAttribute(Qt::WA_TranslucentBackground, false);
+    menu->setAttribute(Qt::WA_NoSystemBackground, false);
+    menu->setAutoFillBackground(true);
     menu->setAttribute(Qt::WA_StyledBackground, true);
     // Flags before the native HWND exists. setWindowFlags during Show can hide
     // the popup. Tray already has these; context menus do not.
-    const Qt::WindowFlags hints = Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint;
-    if ((menu->windowFlags() & hints) != hints)
-        menu->setWindowFlags((menu->windowFlags() | Qt::Popup | hints));
+    if (!menu->isVisible()) {
+        const Qt::WindowFlags hints = Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint;
+        if ((menu->windowFlags() & hints) != hints)
+            menu->setWindowFlags(menu->windowFlags() | Qt::Popup | hints);
+    }
 }
 
 void polishMenuShape(QWidget *menu)
@@ -254,10 +327,12 @@ protected:
             return false;
         const QEvent::Type type = event->type();
         if (widget->inherits("QMenu")) {
-            if (type == QEvent::Polish)
+            if (type == QEvent::Polish || type == QEvent::Show)
                 polishMenuWindow(widget);
             if (type == QEvent::Polish || type == QEvent::Show || type == QEvent::Resize)
                 polishMenuShape(widget);
+            if (type == QEvent::Paint)
+                paintMenuPaper(widget);
             return false;
         }
         if (type != QEvent::Polish && type != QEvent::Show)
