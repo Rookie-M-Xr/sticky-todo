@@ -53,29 +53,23 @@ python .\test_datastore.py
 
 ## 运行调试
 
-日常带托盘请用 `dist/Start StickyTodo.cmd`（工程目录带 Low integrity 标签时，直接跑 `dist\StickyTodo.exe` 会降到低完整性，托盘会被系统拒绝）。
-
-`Start StickyTodo.cmd` 会启动 `%LOCALAPPDATA%\StickyTodo\runtime\StickyTodo.exe`（中等完整性副本），并传入：
-
-```text
---data-dir <本包目录>\config
-```
+日常**一般直接双击** `dist\StickyTodo.exe` 即可。若工程/`dist` 目录带 Low integrity 标签，进程会先自愈：拷贝到 `%LOCALAPPDATA%\StickyTodo\runtime`（中等完整性）并以 `--data-dir <本包>\config` 重启，托盘可用。`Start StickyTodo.cmd` 仍可用作解除 Internet 标记或自愈未生效时的兜底，**不是**必经步骤。
 
 数据目录解析顺序：
 
-1. 命令行 `--data-dir`（由启动脚本写入环境变量 `STICKY_TODO_DATA_DIR`）
+1. 命令行 `--data-dir` / 环境变量 `STICKY_TODO_DATA_DIR`
 2. 否则使用 **当前 exe 同级** 的 `config`（便携默认）
 
-因此不要混用多种启动方式却假设只有一份数据：直接跑 LocalAppData 里的 runtime、直接跑 `dist\StickyTodo.exe`、以及 `Start StickyTodo.cmd`，在未显式传入同一 `--data-dir` 时可能落到不同目录。开机自启项会写入「当前会话解析到的数据目录」；**不会**把位于 `%TEMP%` 的测试目录写进启动项。
+自愈与 `Start StickyTodo.cmd` 都会把数据钉在本包 `config`，避免 LocalAppData runtime 与绿色版各写一份。开机自启项写入「当前会话解析到的数据目录」；**不会**把位于 `%TEMP%` 的测试目录写进启动项。
 
-隔离测试仍可用：
+隔离测试：
 
 ```powershell
 $env:STICKY_TODO_DATA_DIR = "$PWD\testdata"
 .\dist\StickyTodo.exe
 ```
 
-`STICKY_TODO_DATA_DIR` / `--data-dir` 只用于测试隔离或启动脚本定点；日常请固定走 `Start StickyTodo.cmd`，设置页可打开当前实际数据目录确认路径。
+无托盘时点 `×` / `—` 会保存并退出（TR #14）。设置页可打开当前实际数据目录确认路径。
 
 ## 多屏说明（TR #7）
 

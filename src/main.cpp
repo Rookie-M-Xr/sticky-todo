@@ -9,6 +9,12 @@ int main(int argc, char *argv[])
 {
     WinUtils::applyCommandLineDataDir();
 
+    // Low-integrity launch (common when the package folder is labeled Low):
+    // hand off to %LOCALAPPDATA%\StickyTodo\runtime at medium IL so the tray
+    // works; keep --data-dir on the original package config.
+    if (WinUtils::handoffIfLowIntegrity())
+        return 0;
+
     if (!WinUtils::acquireSingleInstance()) {
         WinUtils::notifyExistingInstance();
         return 0;

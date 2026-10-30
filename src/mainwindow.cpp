@@ -905,8 +905,8 @@ void MainWindow::ensureTrayIcon()
     }
     if (!m_trayInstalled) {
         const QString message = denied
-            ? QStringLiteral("这个目录被标成了低完整性，Windows 不允许托盘图标。请改用 Start StickyTodo.cmd 打开。")
-            : QStringLiteral("托盘图标未能加入任务栏：%1").arg(detail);
+            ? QStringLiteral("系统托盘不可用（常见于低完整性）。点 × 将保存并退出；也可试 Start StickyTodo.cmd。")
+            : QStringLiteral("托盘不可用：%1。点 × 将保存并退出。").arg(detail);
         showToast(message, QString(), {}, 8000);
     }
 }

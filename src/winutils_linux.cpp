@@ -81,6 +81,11 @@ void applyCommandLineDataDir()
     applyDataDirFromArgs(args);
 }
 
+bool handoffIfLowIntegrity()
+{
+    return false;
+}
+
 bool setAutoStart(bool enabled, QString *errorMessage, const QString &dataDir)
 {
     Q_UNUSED(enabled);

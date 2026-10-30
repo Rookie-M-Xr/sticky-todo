@@ -11,6 +11,9 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QFile>
+#include <QSaveFile>
+#include <QIODevice>
 #include <QImage>
 #include <QWidget>
 
@@ -245,6 +248,84 @@ void applyDataDirFromCommandLine()
         }
     }
     LocalFree(argv);
+}
+
+
+bool isProcessLowIntegrity()
+{
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+        return false;
+
+    DWORD length = 0;
+    GetTokenInformation(token, TokenIntegrityLevel, nullptr, 0, &length);
+    if (length == 0) {
+        CloseHandle(token);
+        return false;
+    }
+    std::vector<unsigned char> buffer(length);
+    if (!GetTokenInformation(token, TokenIntegrityLevel, buffer.data(), length, &length)) {
+        CloseHandle(token);
+        return false;
+    }
+    CloseHandle(token);
+
+    auto *til = reinterpret_cast<TOKEN_MANDATORY_LABEL *>(buffer.data());
+    if (!til || !til->Label.Sid || !IsValidSid(til->Label.Sid))
+        return false;
+    const DWORD rid = *GetSidSubAuthority(
+        til->Label.Sid,
+        static_cast<DWORD>(*GetSidSubAuthorityCount(til->Label.Sid) - 1));
+    return rid < SECURITY_MANDATORY_MEDIUM_RID;
+}
+
+QString moduleDirectory()
+{
+    wchar_t path[MAX_PATH];
+    const DWORD n = GetModuleFileNameW(nullptr, path, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH)
+        return {};
+    return QFileInfo(QString::fromWCharArray(path)).absolutePath();
+}
+
+bool writeHandoffScript(const QString &scriptPath, const QString &srcDir, const QString &dataDir)
+{
+    const QString src = QDir::toNativeSeparators(srcDir);
+    const QString data = QDir::toNativeSeparators(dataDir);
+    // Medium cmd (started via explorer) copies package → LocalAppData runtime
+    // then relaunches with the same --data-dir. A low process cannot raise its
+    // own IL; explorer as CreateProcess parent of the .cmd yields medium.
+    QString body;
+    body += QStringLiteral("@echo off\r\n");
+    body += QStringLiteral("setlocal\r\n");
+    body += QStringLiteral("set \"SRC=%1\"\r\n").arg(src);
+    body += QStringLiteral("set \"DATA=%1\"\r\n").arg(data);
+    body += QStringLiteral("set \"RUNTIME=%LOCALAPPDATA%\\StickyTodo\\runtime\"\r\n");
+    body += QStringLiteral("mkdir \"%RUNTIME%\\platforms\" 2>nul\r\n");
+    body += QStringLiteral("copy /Y \"%SRC%\\StickyTodo.exe\" \"%RUNTIME%\\StickyTodo.exe\" >nul\r\n");
+    body += QStringLiteral("copy /Y \"%SRC%\\Qt6Core.dll\" \"%RUNTIME%\\\" >nul\r\n");
+    body += QStringLiteral("copy /Y \"%SRC%\\Qt6Gui.dll\" \"%RUNTIME%\\\" >nul\r\n");
+    body += QStringLiteral("copy /Y \"%SRC%\\Qt6Widgets.dll\" \"%RUNTIME%\\\" >nul\r\n");
+    body += QStringLiteral("copy /Y \"%SRC%\\libgcc_s_seh-1.dll\" \"%RUNTIME%\\\" >nul\r\n");
+    body += QStringLiteral("copy /Y \"%SRC%\\libstdc++-6.dll\" \"%RUNTIME%\\\" >nul\r\n");
+    body += QStringLiteral("copy /Y \"%SRC%\\libwinpthread-1.dll\" \"%RUNTIME%\\\" >nul\r\n");
+    body += QStringLiteral(
+        "copy /Y \"%SRC%\\platforms\\qwindows.dll\" \"%RUNTIME%\\platforms\\\" >nul\r\n");
+    body += QStringLiteral(
+        "powershell -NoProfile -ExecutionPolicy Bypass -Command "
+        "\"Get-ChildItem -LiteralPath $env:LOCALAPPDATA\\StickyTodo\\runtime -Recurse -File "
+        "| Unblock-File\" >nul 2>&1\r\n");
+    body += QStringLiteral("if not exist \"%RUNTIME%\\StickyTodo.exe\" exit /b 1\r\n");
+    body += QStringLiteral(
+        "start \"\" /D \"%RUNTIME%\" \"%RUNTIME%\\StickyTodo.exe\" --data-dir \"%DATA%\"\r\n");
+
+    QSaveFile file(scriptPath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return false;
+    const QByteArray bytes = body.toLocal8Bit();
+    if (file.write(bytes) != bytes.size())
+        return false;
+    return file.commit();
 }
 
 LSTATUS queryAutoStart(QString *command)
@@ -499,6 +580,41 @@ void applyCommandLineDataDir()
 {
     applyDataDirFromCommandLine();
 }
+
+
+bool handoffIfLowIntegrity()
+{
+    if (!isProcessLowIntegrity())
+        return false;
+
+    const QString exeDir = moduleDirectory();
+    if (exeDir.isEmpty())
+        return false;
+
+    const QString localApp = qEnvironmentVariable("LOCALAPPDATA").trimmed();
+    if (localApp.isEmpty())
+        return false;
+
+    const QString runtimeDir = QDir(localApp).filePath(QStringLiteral("StickyTodo/runtime"));
+    if (QDir::cleanPath(exeDir).compare(QDir::cleanPath(runtimeDir), Qt::CaseInsensitive) == 0)
+        return false; // already the medium runtime — do not loop
+
+    QString dataDir = qEnvironmentVariable("STICKY_TODO_DATA_DIR").trimmed();
+    if (dataDir.isEmpty())
+        dataDir = QDir(exeDir).filePath(QStringLiteral("config"));
+
+    const QString scriptPath = QDir::temp().filePath(QStringLiteral("StickyTodo-handoff.cmd"));
+    if (!writeHandoffScript(scriptPath, exeDir, dataDir))
+        return false;
+
+    const std::wstring scriptQuoted =
+        L"\"" + QDir::toNativeSeparators(scriptPath).toStdWString() + L"\"";
+    // open via explorer so CreateProcess parent is medium (not this low process)
+    const HINSTANCE rc = ShellExecuteW(nullptr, L"open", L"explorer.exe",
+                                       scriptQuoted.c_str(), nullptr, SW_HIDE);
+    return reinterpret_cast<INT_PTR>(rc) > 32;
+}
+
 
 bool trayAvailable()
 {

@@ -14,6 +14,11 @@ unsigned int activationMessage();
 
 void applyCommandLineDataDir();
 
+// Low IL (e.g. exe under a Low-labeled folder): copy+relaunch via
+// %LOCALAPPDATA%\\StickyTodo\\runtime at medium integrity (same idea as
+// Start StickyTodo.cmd). Returns true if this process should exit now.
+bool handoffIfLowIntegrity();
+
 bool setAutoStart(bool enabled, QString *errorMessage, const QString &dataDir = QString());
 bool autoStartEnabled(QString *command = nullptr);
 
