@@ -9,6 +9,7 @@
 ```text
 src/               C++/Qt 源码
 resources/         app.ico、app.png、qrc、rc、manifest
+docs/              发布约定等文档
 build.py           手工 moc/rcc/windres/g++ 构建与部署脚本
 test_datastore.py  无 GUI DataStore 单测（JSON 往返 / .bak 恢复）
 tests/             DataStore 测试源码
@@ -113,6 +114,16 @@ $env:STICKY_TODO_DATA_DIR = "$PWD\testdata"
 - `fix: 修复多屏贴边回跳（TR #7）`（正文另起一行写 `Fixes #7` 可自动关单）
 - `docs: README 去掉本机绝对路径`
 - `chore: 构建脚本改为仅使用环境变量`
+
+## 发布
+
+正式发版约定见 [`docs/RELEASE.md`](docs/RELEASE.md)（SemVer、`vX.Y.Z` tag 须推远程、CHANGELOG、GitHub Release、Win zip / Linux tar 文件名带版本）。
+
+- 小皮：定版本与范围并拍板。
+- 劳模：对版本、tag、双端包、Release。
+- 小测：对发布资产解压冒烟，频道报 PASS/FAIL。
+
+用户包说明仍以 `dist/README.md` 为准。
 
 ## 实现要点
 
