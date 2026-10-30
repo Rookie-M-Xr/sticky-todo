@@ -23,7 +23,20 @@ struct TodoItem {
     static TodoItem fromJson(const QJsonObject &object, bool *ok = nullptr);
 };
 
+struct DailySnapshot {
+    QString id;
+    QString text;
+    QString sourceTodoId; // completed todo id this line was snapped from; empty if none
+    QDate date;
+    QDateTime createdAt;
+    QDateTime updatedAt;
+
+    QJsonObject toJson() const;
+    static DailySnapshot fromJson(const QJsonObject &object, bool *ok = nullptr);
+};
+
 enum class GroupId {
+
     Overdue,
     Today,
     Tomorrow,

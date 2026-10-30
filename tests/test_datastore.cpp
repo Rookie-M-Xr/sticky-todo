@@ -270,6 +270,81 @@ void testRetentionPurge()
         pass("retention purge + auto on load");
 }
 
+
+void testDailySnapshots()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "daily: data dir");
+
+    {
+        DataStore store;
+        expect(store.load(), "daily: load");
+        const QString openId = store.addTodo(QStringLiteral("open task"), QDate::currentDate());
+        const QString doneId = store.addTodo(QStringLiteral("done today"), QDate::currentDate());
+        expect(!openId.isEmpty() && !doneId.isEmpty(), "daily: seeded todos");
+        expect(store.setCompleted(doneId, true), "daily: complete today");
+
+        // Older completed should not enter today's report
+        TodoItem oldItem;
+        oldItem.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        oldItem.text = QStringLiteral("done yesterday");
+        oldItem.createdAt = QDateTime::currentDateTime().addDays(-2);
+        oldItem.updatedAt = oldItem.createdAt;
+        oldItem.dueDate = QDate::currentDate().addDays(-1);
+        oldItem.completed = true;
+        oldItem.completedAt = QDateTime::currentDateTime().addDays(-1);
+        expect(store.restoreTodo(oldItem), "daily: restore yesterday");
+
+        const int added = store.syncDailyFromCompleted(QDate::currentDate());
+        expect(added == 1, "daily: one snapshot from today");
+        const QVector<DailySnapshot> snaps = store.dailySnapshots(QDate::currentDate());
+        expect(snaps.size() == 1, "daily: one line");
+        expect(snaps.first().sourceTodoId == doneId, "daily: source id");
+        expect(snaps.first().text == QStringLiteral("done today"), "daily: text copied");
+
+        const QString snapId = snaps.first().id;
+        expect(store.updateDailySnapshotText(snapId, QStringLiteral("edited report line")),
+               "daily: edit snapshot");
+        const TodoItem *todo = store.findTodo(doneId);
+        expect(todo != nullptr, "daily: todo still there");
+        expect(todo->text == QStringLiteral("done today"), "daily: todo text unchanged");
+        expect(store.dailySnapshots(QDate::currentDate()).first().text
+                   == QStringLiteral("edited report line"),
+               "daily: snapshot edited");
+
+        const QString plain = store.formatDailyPlainText(QDate::currentDate());
+        expect(plain.contains(QStringLiteral("edited report line")), "daily: plain has edit");
+        expect(plain.contains(QDate::currentDate().toString(Qt::ISODate)), "daily: plain has date");
+
+        // Second sync should not duplicate
+        expect(store.syncDailyFromCompleted(QDate::currentDate()) == 0, "daily: no duplicate");
+        expect(store.flush(), "daily: flush");
+        expect(QFile::exists(store.dailyReportsPath()), "daily: file exists");
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "daily-reload: load");
+        const QVector<DailySnapshot> snaps = store.dailySnapshots(QDate::currentDate());
+        expect(snaps.size() == 1, "daily-reload: one line");
+        expect(snaps.first().text == QStringLiteral("edited report line"),
+               "daily-reload: edit persisted");
+        const TodoItem *todo = nullptr;
+        for (const TodoItem &item : store.todos()) {
+            if (item.text == QStringLiteral("done today")) {
+                todo = &item;
+                break;
+            }
+        }
+        expect(todo != nullptr, "daily-reload: original todo");
+        expect(todo->text == QStringLiteral("done today"), "daily-reload: todo still original");
+    }
+
+    if (g_failed == before)
+        pass("daily snapshots + edit isolation + persist");
+}
+
 void testArchiveExpired()
 {
     const int before = g_failed;
@@ -332,6 +407,7 @@ int main(int argc, char *argv[])
     testCorruptionRecovery();
     testImmediatePersistAndIsolation();
     testRetentionPurge();
+    testDailySnapshots();
     testArchiveExpired();
 
     if (g_failed != 0) {

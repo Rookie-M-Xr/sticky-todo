@@ -46,6 +46,7 @@ SOURCES = [
     "todoview.cpp",
     "calendarpopup.cpp",
     "settingspage.cpp",
+    "dailyreportpage.cpp",
     "winutils.cpp",
     "mainwindow.cpp",
 ]
@@ -156,6 +157,7 @@ def main() -> int:
         "todoview.h",
         "calendarpopup.h",
         "settingspage.h",
+        "dailyreportpage.h",
         "mainwindow.h",
     ]
     generated: list[Path] = []

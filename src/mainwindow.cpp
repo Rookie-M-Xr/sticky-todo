@@ -4,6 +4,7 @@
 #include "datastore.h"
 #include "icons.h"
 #include "settingspage.h"
+#include "dailyreportpage.h"
 #include "theme.h"
 #include "todoview.h"
 #include "widgets.h"
@@ -343,6 +344,9 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_settingsPage, &SettingsPage::messageRequested, this, [this](const QString &text) {
         showToast(text);
     });
+    connect(m_dailyPage, &DailyReportPage::messageRequested, this, [this](const QString &text) {
+        showToast(text);
+    });
 
     connect(qApp, &QGuiApplication::applicationStateChanged, this,
             [this](Qt::ApplicationState state) {
@@ -456,6 +460,10 @@ void MainWindow::buildUi()
     m_pinButton->hide();
     topRow->addWidget(m_pinButton, 0, Qt::AlignVCenter);
 
+    m_dailyButton = new IconButton(AppIcon::Calendar, 26, 16, m_header);
+    m_dailyButton->setToolTip(QStringLiteral("日报"));
+    topRow->addWidget(m_dailyButton, 0, Qt::AlignVCenter);
+
     m_settingsButton = new IconButton(AppIcon::Settings, 26, 17, m_header);
     m_settingsButton->setToolTip(QStringLiteral("设置"));
     topRow->addWidget(m_settingsButton, 0, Qt::AlignVCenter);
@@ -489,8 +497,10 @@ void MainWindow::buildUi()
         "QStackedWidget > QWidget { background: transparent; }"));
     m_todosView = new TodoScrollView(m_store, m_stack);
     m_settingsPage = new SettingsPage(m_store, m_stack);
+    m_dailyPage = new DailyReportPage(m_store, m_stack);
     m_stack->addWidget(m_todosView);
     m_stack->addWidget(m_settingsPage);
+    m_stack->addWidget(m_dailyPage);
     cardLayout->addWidget(m_stack, 1);
 
     auto *composerWrap = new QWidget(m_card);
@@ -539,7 +549,8 @@ void MainWindow::buildUi()
                                 ? m_store->settings().draftDue
                                 : QDate::currentDate());
 
-    connect(m_backButton, &QAbstractButton::clicked, this, &MainWindow::closeSettingsPage);
+    connect(m_backButton, &QAbstractButton::clicked, this, &MainWindow::closeOverlayPage);
+    connect(m_dailyButton, &QAbstractButton::clicked, this, &MainWindow::openDailyPage);
     connect(m_settingsButton, &QAbstractButton::clicked, this, &MainWindow::openSettingsPage);
     connect(m_pinButton, &QAbstractButton::clicked, this, &MainWindow::togglePin);
     connect(m_hideButton, &QAbstractButton::clicked, this, &MainWindow::minimizeToTray);
@@ -1284,6 +1295,9 @@ void MainWindow::updateHeader()
     if (m_settingsVisible) {
         m_titleLabel->setText(QStringLiteral("设置"));
         m_subtitleLabel->setText(QStringLiteral("轻量、本地、离线"));
+    } else if (m_dailyVisible) {
+        m_titleLabel->setText(QStringLiteral("日报"));
+        m_subtitleLabel->setText(dateHeadline(m_currentDate) + QStringLiteral(" · 今日完成快照"));
     } else {
         m_titleLabel->setText(QStringLiteral("便签待办"));
         QString subtitle = dateHeadline(m_currentDate);
@@ -1293,10 +1307,13 @@ void MainWindow::updateHeader()
         m_subtitleLabel->setText(subtitle);
     }
 
-    m_backButton->setVisible(m_settingsVisible);
-    m_searchBox->setVisible(!m_settingsVisible);
-    m_settingsButton->setVisible(!m_settingsVisible);
-    m_pinButton->setVisible(!m_settingsVisible);
+    const bool overlay = m_settingsVisible || m_dailyVisible;
+    m_backButton->setVisible(overlay);
+    m_searchBox->setVisible(!overlay);
+    m_settingsButton->setVisible(!overlay);
+    if (m_dailyButton)
+        m_dailyButton->setVisible(!overlay);
+    m_pinButton->setVisible(!overlay);
     updatePinButton();
     updateTrayState();
 
@@ -1304,15 +1321,19 @@ void MainWindow::updateHeader()
         auto *tab = static_cast<DockTab *>(m_tab);
         tab->setData(m_dockSide, pending, m_pinned);
     }
-    setWindowTitle(m_settingsVisible ? QStringLiteral("便签待办 · 设置")
-                                     : QStringLiteral("便签待办 · %1 项待办").arg(pending));
+    if (m_settingsVisible)
+        setWindowTitle(QStringLiteral("便签待办 · 设置"));
+    else if (m_dailyVisible)
+        setWindowTitle(QStringLiteral("便签待办 · 日报"));
+    else
+        setWindowTitle(QStringLiteral("便签待办 · %1 项待办").arg(pending));
 }
 
 void MainWindow::updatePinButton()
 {
     if (!m_pinButton)
         return;
-    m_pinButton->setVisible(!m_settingsVisible);
+    m_pinButton->setVisible(!m_settingsVisible && !m_dailyVisible);
     m_pinButton->setIconColor(m_pinned ? Theme::Accent : Theme::InkSoft);
     if (!isDocked()) {
         m_pinButton->setToolTip(QStringLiteral("贴边并固定展开（点击后停靠屏幕边缘）"));
@@ -1747,6 +1768,8 @@ void MainWindow::openSettingsPage()
         m_composer->clearFocus();
     if (m_settingsVisible)
         return;
+    if (m_dailyVisible)
+        m_dailyVisible = false;
     if (m_collapsed)
         expandFromTab(false);
     stopCollapseCountdown();
@@ -1763,9 +1786,39 @@ void MainWindow::openSettingsPage()
 
 void MainWindow::closeSettingsPage()
 {
-    if (!m_settingsVisible)
+    closeOverlayPage();
+}
+
+void MainWindow::openDailyPage()
+{
+    if (m_composer)
+        m_composer->clearFocus();
+    if (m_dailyVisible)
+        return;
+    if (m_settingsVisible)
+        m_settingsVisible = false;
+    if (m_collapsed)
+        expandFromTab(false);
+    stopCollapseCountdown();
+    m_dailyVisible = true;
+    m_stack->setCurrentWidget(m_dailyPage);
+    if (m_dailyPage)
+        m_dailyPage->refresh();
+    if (m_composerBar && m_composerBar->parentWidget())
+        m_composerBar->parentWidget()->hide();
+    if (m_snackbar)
+        m_snackbar->dismiss();
+    updateHeader();
+    if (m_dailyPage)
+        m_dailyPage->setFocus(Qt::OtherFocusReason);
+}
+
+void MainWindow::closeOverlayPage()
+{
+    if (!m_settingsVisible && !m_dailyVisible)
         return;
     m_settingsVisible = false;
+    m_dailyVisible = false;
     m_stack->setCurrentWidget(m_todosView);
     if (m_composerBar && m_composerBar->parentWidget())
         m_composerBar->parentWidget()->show();
@@ -2178,6 +2231,8 @@ void MainWindow::handleDelete(const QString &id)
 void MainWindow::handleCompletion(const QString &id, bool completed)
 {
     m_store->setCompleted(id, completed);
+    if (completed && m_dailyVisible && m_dailyPage)
+        m_dailyPage->refresh();
 }
 
 void MainWindow::handleTextEdited(const QString &id, const QString &text)

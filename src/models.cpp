@@ -73,6 +73,48 @@ TodoItem TodoItem::fromJson(const QJsonObject &object, bool *ok)
     return item;
 }
 
+QJsonObject DailySnapshot::toJson() const
+{
+    QJsonObject object;
+    object.insert(QStringLiteral("id"), id);
+    object.insert(QStringLiteral("text"), text);
+    object.insert(QStringLiteral("sourceTodoId"), sourceTodoId);
+    object.insert(QStringLiteral("date"), date.isValid() ? date.toString(Qt::ISODate) : QString());
+    object.insert(QStringLiteral("createdAt"), createdAt.toString(Qt::ISODateWithMs));
+    object.insert(QStringLiteral("updatedAt"), updatedAt.toString(Qt::ISODateWithMs));
+    return object;
+}
+
+DailySnapshot DailySnapshot::fromJson(const QJsonObject &object, bool *ok)
+{
+    DailySnapshot item;
+    bool valid = true;
+    item.id = object.value(QStringLiteral("id")).toString().trimmed();
+    if (item.id.isEmpty())
+        item.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    item.text = object.value(QStringLiteral("text")).toString();
+    item.sourceTodoId = object.value(QStringLiteral("sourceTodoId")).toString().trimmed();
+    const QString dateText = object.value(QStringLiteral("date")).toString().trimmed();
+    if (!dateText.isEmpty()) {
+        const QDate parsed = QDate::fromString(dateText, Qt::ISODate);
+        if (parsed.isValid())
+            item.date = parsed;
+        else
+            valid = false;
+    } else {
+        valid = false;
+    }
+    item.createdAt = parseDateTime(object.value(QStringLiteral("createdAt")).toString());
+    if (!item.createdAt.isValid())
+        item.createdAt = QDateTime::currentDateTime();
+    item.updatedAt = parseDateTime(object.value(QStringLiteral("updatedAt")).toString(), item.createdAt);
+    if (item.text.size() > 4000)
+        item.text = item.text.left(4000);
+    if (ok)
+        *ok = valid;
+    return item;
+}
+
 const QVector<GroupInfo> &allGroups()
 {
     static const QVector<GroupInfo> groups = {

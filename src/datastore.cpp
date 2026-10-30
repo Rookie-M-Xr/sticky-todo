@@ -42,8 +42,10 @@ DataStore::DataStore(QObject *parent)
 {
     m_todoSaveTimer.setSingleShot(true);
     m_settingsSaveTimer.setSingleShot(true);
+    m_dailySaveTimer.setSingleShot(true);
     connect(&m_todoSaveTimer, &QTimer::timeout, this, &DataStore::saveTodosNow);
     connect(&m_settingsSaveTimer, &QTimer::timeout, this, &DataStore::saveSettingsNow);
+    connect(&m_dailySaveTimer, &QTimer::timeout, this, [this]() { saveDailyNow(); });
 }
 
 QString DataStore::resolveDataDir() const
@@ -75,6 +77,11 @@ QString DataStore::archivePath() const
     return QDir(m_dataDir).filePath(QStringLiteral("todos-archive.json"));
 }
 
+QString DataStore::dailyReportsPath() const
+{
+    return QDir(m_dataDir).filePath(QStringLiteral("daily-reports.json"));
+}
+
 bool DataStore::load()
 {
     m_dataDir = resolveDataDir();
@@ -89,6 +96,7 @@ bool DataStore::load()
     m_loaded = true;
     loadTodos();
     loadSettings();
+    loadDailyReports();
     // R0: auto-purge completed items older than retentionDays once per load.
     applyRetentionOnLoad();
     return true;
@@ -98,6 +106,7 @@ bool DataStore::flush()
 {
     m_todoSaveTimer.stop();
     m_settingsSaveTimer.stop();
+    m_dailySaveTimer.stop();
     bool ok = true;
     if (m_todosDirty) {
         saveTodosNow();
@@ -106,6 +115,10 @@ bool DataStore::flush()
     if (m_settingsDirty) {
         saveSettingsNow();
         ok = ok && !m_settingsDirty;
+    }
+    if (m_dailyDirty) {
+        saveDailyNow();
+        ok = ok && !m_dailyDirty;
     }
     return ok;
 }
@@ -905,3 +918,179 @@ bool DataStore::validateWindowRect(const QRect &rect) const
     return rect.isValid() && rect.width() >= 240 && rect.height() >= 300
         && rect.width() <= 2000 && rect.height() <= 1600;
 }
+
+void DataStore::scheduleDailySave(int delayMs)
+{
+    m_dailyDirty = true;
+    if (delayMs <= 0) {
+        m_dailySaveTimer.stop();
+        saveDailyNow();
+        return;
+    }
+    m_dailySaveTimer.start(delayMs);
+}
+
+void DataStore::saveDailyNow()
+{
+    m_dailySaveTimer.stop();
+    if (!m_dailyDirty)
+        return;
+
+    QJsonObject days;
+    for (auto it = m_dailyByDate.constBegin(); it != m_dailyByDate.constEnd(); ++it) {
+        QJsonArray array;
+        for (const DailySnapshot &snap : it.value())
+            array.append(snap.toJson());
+        days.insert(it.key(), array);
+    }
+    QJsonObject root;
+    root.insert(QStringLiteral("schemaVersion"), kSchemaVersion);
+    root.insert(QStringLiteral("days"), days);
+
+    QString error;
+    if (writeJson(dailyReportsPath(), root, &error)) {
+        m_dailyDirty = false;
+        m_lastError.clear();
+    } else {
+        const QString message = QStringLiteral("日报保存失败：%1").arg(error);
+        m_lastError = message;
+        addNotice(message);
+        emit errorOccurred(message);
+    }
+}
+
+void DataStore::loadDailyReports()
+{
+    m_dailyByDate.clear();
+    m_dailyDirty = false;
+    const QString path = dailyReportsPath();
+    if (!QFileInfo::exists(path))
+        return;
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        addNotice(QStringLiteral("无法读取日报文件。"));
+        return;
+    }
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+    file.close();
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        preserveCorruptFile(path);
+        addNotice(QStringLiteral("日报文件损坏，已保留损坏副本。"));
+        return;
+    }
+    const QJsonObject root = doc.object();
+    const QJsonValue daysValue = root.value(QStringLiteral("days"));
+    if (!daysValue.isObject())
+        return;
+    const QJsonObject days = daysValue.toObject();
+    for (auto it = days.constBegin(); it != days.constEnd(); ++it) {
+        if (!it.value().isArray())
+            continue;
+        QVector<DailySnapshot> list;
+        const QJsonArray array = it.value().toArray();
+        for (const QJsonValue &value : array) {
+            if (!value.isObject())
+                continue;
+            bool ok = false;
+            DailySnapshot snap = DailySnapshot::fromJson(value.toObject(), &ok);
+            if (!snap.date.isValid())
+                snap.date = QDate::fromString(it.key(), Qt::ISODate);
+            if (ok || !snap.text.isEmpty())
+                list.append(snap);
+        }
+        if (!list.isEmpty())
+            m_dailyByDate.insert(it.key(), list);
+    }
+}
+
+int DataStore::syncDailyFromCompleted(QDate day)
+{
+    if (!day.isValid())
+        day = QDate::currentDate();
+    const QString key = day.toString(Qt::ISODate);
+    QVector<DailySnapshot> &list = m_dailyByDate[key];
+
+    QSet<QString> existingSources;
+    for (const DailySnapshot &snap : list) {
+        if (!snap.sourceTodoId.isEmpty())
+            existingSources.insert(snap.sourceTodoId);
+    }
+
+    int added = 0;
+    const QDateTime now = QDateTime::currentDateTime();
+    for (const TodoItem &todo : m_todos) {
+        if (!todo.completed || !todo.completedAt.isValid())
+            continue;
+        if (todo.completedAt.date() != day)
+            continue;
+        if (existingSources.contains(todo.id))
+            continue;
+        DailySnapshot snap;
+        snap.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        snap.text = todo.text;
+        snap.sourceTodoId = todo.id;
+        snap.date = day;
+        snap.createdAt = now;
+        snap.updatedAt = now;
+        list.append(snap);
+        existingSources.insert(todo.id);
+        ++added;
+    }
+
+    if (added > 0) {
+        scheduleDailySave(0);
+        emit dailyReportsChanged();
+    }
+    return added;
+}
+
+QVector<DailySnapshot> DataStore::dailySnapshots(QDate day) const
+{
+    if (!day.isValid())
+        day = QDate::currentDate();
+    return m_dailyByDate.value(day.toString(Qt::ISODate));
+}
+
+bool DataStore::updateDailySnapshotText(const QString &snapshotId, const QString &text)
+{
+    const QString trimmed = text.left(4000);
+    for (auto it = m_dailyByDate.begin(); it != m_dailyByDate.end(); ++it) {
+        for (DailySnapshot &snap : it.value()) {
+            if (snap.id != snapshotId)
+                continue;
+            if (snap.text == trimmed)
+                return true;
+            snap.text = trimmed;
+            snap.updatedAt = QDateTime::currentDateTime();
+            scheduleDailySave(0);
+            emit dailyReportsChanged();
+            // Intentionally do NOT touch m_todos / write back to todos.
+            return true;
+        }
+    }
+    return false;
+}
+
+QString DataStore::formatDailyPlainText(QDate day) const
+{
+    if (!day.isValid())
+        day = QDate::currentDate();
+    const QVector<DailySnapshot> list = dailySnapshots(day);
+    QStringList lines;
+    lines.append(QStringLiteral("日报 %1").arg(day.toString(QStringLiteral("yyyy-MM-dd"))));
+    lines.append(QString());
+    if (list.isEmpty()) {
+        lines.append(QStringLiteral("（今日暂无完成项）"));
+    } else {
+        int i = 1;
+        for (const DailySnapshot &snap : list) {
+            const QString body = snap.text.trimmed().isEmpty() ? QStringLiteral("（空）") : snap.text.trimmed();
+            lines.append(QStringLiteral("%1. %2").arg(i).arg(body));
+            ++i;
+        }
+    }
+    return lines.join(QStringLiteral("\n"));
+}
+

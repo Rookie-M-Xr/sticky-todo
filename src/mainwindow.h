@@ -29,6 +29,7 @@ class QStackedWidget;
 class QTimer;
 class SearchBox;
 class SettingsPage;
+class DailyReportPage;
 class Snackbar;
 class TodoScrollView;
 class QWidget;
@@ -94,6 +95,8 @@ private:
 
     void openSettingsPage();
     void closeSettingsPage();
+    void openDailyPage();
+    void closeOverlayPage();
     void togglePin();
     void handleDockRequest(int side);
     void handleCollapseAction();
@@ -135,6 +138,8 @@ private:
     QStackedWidget *m_stack = nullptr;
     TodoScrollView *m_todosView = nullptr;
     SettingsPage *m_settingsPage = nullptr;
+    DailyReportPage *m_dailyPage = nullptr;
+    IconButton *m_dailyButton = nullptr;
     QWidget *m_composerBar = nullptr;
     QLineEdit *m_composer = nullptr;
     DateChip *m_composerDate = nullptr;
@@ -165,6 +170,7 @@ private:
     bool m_animating = false;
     bool m_peekExpanded = false;
     bool m_settingsVisible = false;
+    bool m_dailyVisible = false;
     bool m_quitting = false;
     bool m_forceDockCollapse = false;
     bool m_suppressHover = false;

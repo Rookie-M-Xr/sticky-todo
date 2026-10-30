@@ -3,6 +3,7 @@
 #include "models.h"
 
 #include <QHash>
+#include <QMap>
 #include <QObject>
 #include <QRect>
 #include <QStringList>
@@ -62,6 +63,14 @@ public:
     int archiveCompletedOlderThan(int days);
     int archiveAllCompleted();
 
+    QString dailyReportsPath() const;
+    // Ensure today's completed todos have snapshot lines (editable copies; never write back).
+    // Returns number of newly appended snapshots.
+    int syncDailyFromCompleted(QDate day = QDate());
+    QVector<DailySnapshot> dailySnapshots(QDate day = QDate()) const;
+    bool updateDailySnapshotText(const QString &snapshotId, const QString &text);
+    QString formatDailyPlainText(QDate day = QDate()) const;
+
     void setDraft(const QString &draft);
     void setDraftDue(QDate date);
     bool groupExpanded(GroupId id) const;
@@ -80,6 +89,7 @@ signals:
     void todosChanged();
     void settingsChanged();
     void errorOccurred(const QString &message);
+    void dailyReportsChanged();
 
 private slots:
     void saveTodosNow();
@@ -99,6 +109,10 @@ private:
     void touchSettings();
     bool validateWindowRect(const QRect &rect) const;
     void applyRetentionOnLoad();
+
+    void scheduleDailySave(int delayMs);
+    void loadDailyReports();
+    void saveDailyNow();
     int removeCompletedMatching(const std::function<bool(const TodoItem &)> &pred);
     int archiveThenRemoveMatching(const std::function<bool(const TodoItem &)> &pred);
     static bool isCompletedOlderThan(const TodoItem &item, int days, const QDateTime &now);
@@ -114,4 +128,8 @@ private:
     bool m_firstRun = false;
     bool m_todosDirty = false;
     bool m_settingsDirty = false;
+    QMap<QString, QVector<DailySnapshot>> m_dailyByDate; // key = yyyy-MM-dd
+    QTimer m_dailySaveTimer;
+    bool m_dailyDirty = false;
 };
+
