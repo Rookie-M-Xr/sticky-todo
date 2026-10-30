@@ -37,6 +37,9 @@
 #include <oleauto.h>
 #include <exdisp.h>
 #include <shldisp.h>
+#include <shlobj.h>
+#include <servprov.h>
+#include <shlguid.h>
 
 namespace {
 
@@ -351,9 +354,9 @@ bool writeHandoffScript(const QString &scriptPath, const QString &srcDir, const 
 {
     const QString src = QDir::toNativeSeparators(srcDir);
     const QString data = QDir::toNativeSeparators(dataDir);
-    // Medium cmd (started via Shell.Application) copies package → LocalAppData
-    // runtime then relaunches with the same --data-dir. A low process cannot
-    // raise its own IL; Shell.Application ShellExecute yields a medium child.
+    // Medium cmd (started via explorer's Shell.Application) copies package →
+    // LocalAppData runtime then relaunches with the same --data-dir. A Low
+    // process cannot raise its own IL; explorer-brokered ShellExecute yields Medium.
     QString body;
     body += QStringLiteral("@echo off\r\n");
     body += QStringLiteral("setlocal\r\n");
@@ -389,8 +392,9 @@ bool writeHandoffScript(const QString &scriptPath, const QString &srcDir, const 
 
 bool launchHandoffViaShellApplication(const QString &scriptPath, const QString &workingDir)
 {
-    // TR #15: explorer.exe + .cmd only selects the file on Win11. Shell.Application
-    // (IShellDispatch2::ShellExecute) brokers a Medium-IL child from Low.
+    // TR #15: CoCreateInstance(CLSID_Shell) from a Low process stays Low (in-proc
+    // or same-IL). Borrow IShellDispatch2 from the desktop explorer (Medium) via
+    // ShellWindows, then ShellExecute cmd /c handoff.cmd so the child is Medium.
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     bool shouldUninit = false;
     if (hr == S_OK || hr == S_FALSE) {
@@ -401,13 +405,90 @@ bool launchHandoffViaShellApplication(const QString &scriptPath, const QString &
         return false;
     }
 
-    IShellDispatch2 *shell = nullptr;
-    hr = CoCreateInstance(CLSID_Shell, nullptr, CLSCTX_INPROC_SERVER,
-                          IID_IShellDispatch2, reinterpret_cast<void **>(&shell));
-    if (FAILED(hr) || !shell) {
-        hr = CoCreateInstance(CLSID_Shell, nullptr, CLSCTX_LOCAL_SERVER,
-                              IID_IShellDispatch2, reinterpret_cast<void **>(&shell));
+    IShellWindows *windows = nullptr;
+    hr = CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_LOCAL_SERVER,
+                          IID_IShellWindows, reinterpret_cast<void **>(&windows));
+    if (FAILED(hr) || !windows) {
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
     }
+
+    VARIANT vEmpty;
+    VariantInit(&vEmpty);
+    long desktopHwnd = 0;
+    IDispatch *desktopDisp = nullptr;
+    hr = windows->FindWindowSW(&vEmpty, &vEmpty, SWC_DESKTOP, &desktopHwnd,
+                               SWFO_NEEDDISPATCH, &desktopDisp);
+    windows->Release();
+    if (hr != S_OK || !desktopDisp) {
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    IServiceProvider *provider = nullptr;
+    hr = desktopDisp->QueryInterface(IID_IServiceProvider,
+                                     reinterpret_cast<void **>(&provider));
+    desktopDisp->Release();
+    if (FAILED(hr) || !provider) {
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    IShellBrowser *browser = nullptr;
+    hr = provider->QueryService(SID_STopLevelBrowser, IID_IShellBrowser,
+                                reinterpret_cast<void **>(&browser));
+    provider->Release();
+    if (FAILED(hr) || !browser) {
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    IShellView *view = nullptr;
+    hr = browser->QueryActiveShellView(&view);
+    browser->Release();
+    if (FAILED(hr) || !view) {
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    IDispatch *background = nullptr;
+    hr = view->GetItemObject(SVGIO_BACKGROUND, IID_IDispatch,
+                             reinterpret_cast<void **>(&background));
+    view->Release();
+    if (FAILED(hr) || !background) {
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    IShellFolderViewDual *folderView = nullptr;
+    hr = background->QueryInterface(IID_IShellFolderViewDual,
+                                    reinterpret_cast<void **>(&folderView));
+    background->Release();
+    if (FAILED(hr) || !folderView) {
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    IDispatch *appDisp = nullptr;
+    hr = folderView->get_Application(&appDisp);
+    folderView->Release();
+    if (FAILED(hr) || !appDisp) {
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    IShellDispatch2 *shell = nullptr;
+    hr = appDisp->QueryInterface(IID_IShellDispatch2,
+                                 reinterpret_cast<void **>(&shell));
+    appDisp->Release();
     if (FAILED(hr) || !shell) {
         if (shouldUninit)
             CoUninitialize();
