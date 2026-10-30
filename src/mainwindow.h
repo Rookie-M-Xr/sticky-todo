@@ -145,6 +145,7 @@ private:
     IconButton *m_hideButton = nullptr;
     IconButton *m_closeButton = nullptr;
     SearchBox *m_searchBox = nullptr;
+    QWidget *m_integrityBanner = nullptr;
     QStackedWidget *m_stack = nullptr;
     TodoScrollView *m_todosView = nullptr;
     SettingsPage *m_settingsPage = nullptr;

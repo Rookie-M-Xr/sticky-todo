@@ -26,10 +26,11 @@ QString stickyTodoLocalDataDir();
 // Copy known JSON (+ .bak) from srcDir into dstDir when dest file is missing.
 int migrateDataFiles(const QString &srcDir, const QString &dstDir);
 
-// Low IL (e.g. exe under a Low-labeled folder): copy+relaunch via
-// %LOCALAPPDATA%\StickyTodo\runtime at medium integrity (same idea as
-// Start StickyTodo.cmd). Returns true if this process should exit now.
-// When package config is not writable, --data-dir uses stickyTodoLocalDataDir().
+// True when the process token is below Medium IL (Windows MIC). Linux: false.
+bool isProcessLowIntegrity();
+// TR #15: Low cannot silently raise to Medium. Logs a skip notice and always
+// returns false so this process continues in-process (degraded). Never exits
+// as if a Medium child took over.
 bool handoffIfLowIntegrity();
 
 bool setAutoStart(bool enabled, QString *errorMessage, const QString &dataDir = QString());

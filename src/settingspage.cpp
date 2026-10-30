@@ -254,7 +254,7 @@ QWidget *SettingsPage::buildGeneralCard()
 
     m_autoStartSwitch = new SwitchButton(card);
     auto *startRow = new SettingRow(QStringLiteral("开机自动启动"),
-                                    QStringLiteral("登录 Windows 后自动运行，仅当前用户"),
+                                    QStringLiteral("登录 Windows 后自动运行，仅当前用户。推荐用 Start StickyTodo.cmd 启动"),
                                     m_autoStartSwitch, card);
     body->addWidget(startRow);
     connect(m_autoStartSwitch, &QAbstractButton::clicked, this, [this](bool on) {
@@ -620,6 +620,14 @@ QWidget *SettingsPage::buildAboutCard()
     uninstall->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(Theme::Faint.name()));
     uninstall->setWordWrap(true);
     layout->addWidget(uninstall);
+
+    auto *launchHint = new QLabel(
+        QStringLiteral("推荐用 Start StickyTodo.cmd 启动；直接双击 exe 若目录为低完整性则无托盘。"),
+        content);
+    launchHint->setFont(Theme::uiFont(9));
+    launchHint->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(Theme::Faint.name()));
+    launchHint->setWordWrap(true);
+    layout->addWidget(launchHint);
 
     body->addWidget(content);
     return card;

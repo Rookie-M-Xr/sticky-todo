@@ -4,25 +4,30 @@
 
 ## 运行
 
-**一般直接双击 `StickyTodo.exe` 即可**（无需安装、无需管理员）。若目录被标成 Windows 低完整性，程序会自动拷到 `%LOCALAPPDATA%\StickyTodo\runtime` 并以中等完整性重启；数据优先本包 `config`，不可写时回退 `%LOCALAPPDATA%\StickyTodo\data`。
+**请双击本目录的 `Start StickyTodo.cmd` 启动**（无需安装、无需管理员）。不要把直接双击 `StickyTodo.exe` 当作会自动升到中等完整性。
 
-`Start StickyTodo.cmd` 可选：解除 Internet 标记，或自愈未生效时的兜底；不是必经步骤。
+`Start StickyTodo.cmd` 会：
+
+1. 尽量解除本目录文件的 Internet 标记；
+2. 把程序拷到 `%LOCALAPPDATA%\StickyTodo\runtime`（中等完整性）再启动；
+3. 用 `--data-dir` 把数据固定到本包的 `config`。
 
 - 系统要求：Windows 10 / 11 64 位
 - 请解压到有写权限的目录（不要放在 `Program Files` 等受保护位置）；装到无写目录时应用会回退到 `%LOCALAPPDATA%\StickyTodo\data` 并提示。
-- 数据目录：默认是程序同级的 `config`；不可写时回退 `%LOCALAPPDATA%\StickyTodo\data`。经 `Start StickyTodo.cmd` / 自愈启动时，`--data-dir` 指向当时可写的数据目录。
+- 数据目录：默认是程序同级的 `config`；不可写时回退 `%LOCALAPPDATA%\StickyTodo\data`。经 `Start StickyTodo.cmd` 启动时，`--data-dir` 指向当时可写的数据目录。
 - 不要把 `--data-dir` 指到 `%TEMP%` 做日常使用：临时目录被清理后，再次启动会像「配置丢了」。设置页可打开当前数据目录核对。
 - 首次运行会尝试写入当前用户的启动项；启动项会带上当时的数据目录。如果系统策略拒绝写入，设置页会显示实际状态，不会反复弹错。
 - 本目录是绿色版，可整体复制或移动到其他位置；`config` 会跟随程序目录一起移动。移动后请用本目录的 `Start StickyTodo.cmd` 开一次，或在设置中重新开启开机自启（启动项需要更新为新路径）。
 
+## 系统托盘与完整性级别（为什么提示「托盘不可用」）
 
-## 系统托盘与完整性级别
+Windows 有强制完整性级别（Mandatory Integrity Control）。若解压/工程目录被标成 **Low**（常见于带「来自 Internet」标记的目录、或被策略标成低完整性的文件夹），**直接双击 `StickyTodo.exe`** 会继承低完整性；此时系统常拒绝创建托盘图标。
 
-若解压/工程目录被标成 Windows **低完整性**（Low），直接运行时托盘图标可能被系统拒绝。
+这不是业务逻辑随机失败，而是启动路径不对。程序**不会**从低完整性进程里静默抬到中等完整性（不申请管理员、也不为抬完整性去做代码签名）。低完整性直开时会降级继续运行，并在便签上提示请改用 `Start StickyTodo.cmd`。
 
-程序会尽量自行处理：检测到低完整性时，拷贝到 `%LOCALAPPDATA%\StickyTodo\runtime`（中等完整性）并重启；数据优先本包 `config`，不可写则用 `%LOCALAPPDATA%\StickyTodo\data`。`Start StickyTodo.cmd` 保留作兜底。
+**正确做法（推荐）：** 始终双击本目录的 `Start StickyTodo.cmd`。
 
-无可用托盘时：点 `×` / `—` 会保存并退出（TR #14），不会卡死。
+**若仍看到托盘不可用：** 先确认用的是 `Start StickyTodo.cmd`。无可用托盘时，点标题栏 `×` / `—` 会**保存并退出**（TR #14），不会再卡在只提示不退。
 
 ## Windows SmartScreen（「Windows 已保护你的电脑」）
 

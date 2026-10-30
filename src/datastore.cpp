@@ -108,7 +108,7 @@ bool DataStore::load()
     }();
 
     if (!overrideDir.isEmpty()) {
-        // Explicit --data-dir / env: honor it (handoff may already have picked fallback).
+        // Explicit --data-dir / env: honor it (Start.cmd may already have picked fallback).
         m_dataDir = QDir::cleanPath(overrideDir);
         if (!WinUtils::ensureDirectoryWritable(m_dataDir)) {
             const QString message = QStringLiteral("数据目录不可写：%1")

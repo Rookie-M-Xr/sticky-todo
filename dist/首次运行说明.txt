@@ -7,7 +7,10 @@ Sticky Todo 是未签名的个人桌面小工具，Windows 10/11 的 Microsoft D
 3. 如果已经解压：双击 unblock.cmd；或直接双击 Start StickyTodo.cmd。
    也可以在目录中打开 PowerShell 运行：
    Get-ChildItem -Recurse -File | Unblock-File
-4. 以后请双击 Start StickyTodo.cmd 启动；它会先自动解除锁定，再启动程序。
+4. 以后请双击 Start StickyTodo.cmd 启动；它会先自动解除锁定，再把程序拷到
+   %LOCALAPPDATA%\StickyTodo\runtime（中等完整性）启动，托盘才可用。
+   不要直接双击 StickyTodo.exe：若目录被标成低完整性，程序会降级运行（通常无托盘），
+   界面会提示改用本脚本；点 × 仍会保存并退出。不会自动抬到中等完整性。
    如果直接双击 StickyTodo.exe 且仍出现 SmartScreen，点“更多信息”→“仍要运行”。
 
 彻底消除该提示需要购买代码签名证书并签名，个人绿色版无法保证每台机器都不提示。
