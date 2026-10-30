@@ -9,12 +9,10 @@ int main(int argc, char *argv[])
 {
     WinUtils::applyCommandLineDataDir();
 
-    // Low-integrity launch (common when the package folder is labeled Low):
-    // hand off to %LOCALAPPDATA%\StickyTodo\runtime at medium IL so the tray
-    // works; --data-dir stays on package config when writable, else
-    // %LOCALAPPDATA%\StickyTodo\data (TR #16).
-    if (WinUtils::handoffIfLowIntegrity())
-        return 0;
+    // TR #15: Low IL cannot silently raise to Medium. Log-only diagnostics;
+    // never exit as if a Medium child took over. The note continues here
+    // (degraded: typically no tray) and shows an in-app banner.
+    WinUtils::handoffIfLowIntegrity();
 
     if (!WinUtils::acquireSingleInstance()) {
         WinUtils::notifyExistingInstance();

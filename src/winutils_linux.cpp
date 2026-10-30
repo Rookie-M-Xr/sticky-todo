@@ -177,6 +177,11 @@ int migrateDataFiles(const QString &srcDir, const QString &dstDir)
     return copied;
 }
 
+bool isProcessLowIntegrity()
+{
+    return false;
+}
+
 bool handoffIfLowIntegrity()
 {
     return false;

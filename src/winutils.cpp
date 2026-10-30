@@ -31,17 +31,7 @@
 #include <windows.h>
 #include <winreg.h>
 #include <shellapi.h>
-#include <shobjidl.h>
 #include <dwmapi.h>
-#include <objbase.h>
-#include <oleauto.h>
-#include <exdisp.h>
-#include <shldisp.h>
-#include <shlobj.h>
-#include <servprov.h>
-#include <shlguid.h>
-#include <taskschd.h>
-#include <wbemidl.h>
 
 namespace {
 
@@ -261,34 +251,6 @@ void applyDataDirFromCommandLine()
 }
 
 
-bool isProcessLowIntegrity()
-{
-    HANDLE token = nullptr;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
-        return false;
-
-    DWORD length = 0;
-    GetTokenInformation(token, TokenIntegrityLevel, nullptr, 0, &length);
-    if (length == 0) {
-        CloseHandle(token);
-        return false;
-    }
-    std::vector<unsigned char> buffer(length);
-    if (!GetTokenInformation(token, TokenIntegrityLevel, buffer.data(), length, &length)) {
-        CloseHandle(token);
-        return false;
-    }
-    CloseHandle(token);
-
-    auto *til = reinterpret_cast<TOKEN_MANDATORY_LABEL *>(buffer.data());
-    if (!til || !til->Label.Sid || !IsValidSid(til->Label.Sid))
-        return false;
-    const DWORD rid = *GetSidSubAuthority(
-        til->Label.Sid,
-        static_cast<DWORD>(*GetSidSubAuthorityCount(til->Label.Sid) - 1));
-    return rid < SECURITY_MANDATORY_MEDIUM_RID;
-}
-
 QString moduleDirectory()
 {
     wchar_t path[MAX_PATH];
@@ -305,7 +267,7 @@ bool probeWritableFile(const QString &candidatePath)
     QSaveFile probe(candidatePath);
     if (!probe.open(QIODevice::WriteOnly | QIODevice::Truncate))
         return false;
-    const QByteArray marker = QByteArrayLiteral("sticky-todo-handoff-probe");
+    const QByteArray marker = QByteArrayLiteral("sticky-todo-write-probe");
     if (probe.write(marker) != marker.size())
         return false;
     if (!probe.commit())
@@ -314,87 +276,9 @@ bool probeWritableFile(const QString &candidatePath)
     return true;
 }
 
-QString chooseWritableHandoffScriptPath(const QString &exeDir, const QString &localApp)
+void appendIntegrityLog(const QString &exeDir, const QString &line)
 {
-    QStringList candidates;
-    if (!exeDir.isEmpty())
-        candidates << QDir(exeDir).filePath(QStringLiteral("StickyTodo-handoff.cmd"));
-    if (!localApp.isEmpty()) {
-        const QString lowTemp = QDir(localApp).filePath(QStringLiteral("Temp"));
-        QDir().mkpath(lowTemp);
-        candidates << QDir(lowTemp).filePath(QStringLiteral("StickyTodo-handoff.cmd"));
-    }
-    wchar_t tempBuf[MAX_PATH];
-    const DWORD n = GetTempPathW(MAX_PATH, tempBuf);
-    if (n > 0 && n < MAX_PATH) {
-        const QString sysTemp = QString::fromWCharArray(tempBuf);
-        candidates << QDir(sysTemp).filePath(QStringLiteral("StickyTodo-handoff.cmd"));
-    }
-
-    QStringList seen;
-    for (const QString &raw : candidates) {
-        const QString path = QDir::cleanPath(raw);
-        if (path.isEmpty())
-            continue;
-        bool dup = false;
-        for (const QString &s : seen) {
-            if (s.compare(path, Qt::CaseInsensitive) == 0) {
-                dup = true;
-                break;
-            }
-        }
-        if (dup)
-            continue;
-        seen << path;
-        if (probeWritableFile(path))
-            return path;
-    }
-    return {};
-}
-
-bool writeHandoffScript(const QString &scriptPath, const QString &srcDir, const QString &dataDir)
-{
-    const QString src = QDir::toNativeSeparators(srcDir);
-    const QString data = QDir::toNativeSeparators(dataDir);
-    // Medium cmd (started via explorer's Shell.Application) copies package →
-    // LocalAppData runtime then relaunches with the same --data-dir. A Low
-    // process cannot raise its own IL; explorer-brokered ShellExecute yields Medium.
-    QString body;
-    body += QStringLiteral("@echo off\r\n");
-    body += QStringLiteral("setlocal\r\n");
-    body += QStringLiteral("set \"SRC=%1\"\r\n").arg(src);
-    body += QStringLiteral("set \"DATA=%1\"\r\n").arg(data);
-    body += QStringLiteral("set \"RUNTIME=%LOCALAPPDATA%\\StickyTodo\\runtime\"\r\n");
-    body += QStringLiteral("mkdir \"%RUNTIME%\\platforms\" 2>nul\r\n");
-    body += QStringLiteral("copy /Y \"%SRC%\\StickyTodo.exe\" \"%RUNTIME%\\StickyTodo.exe\" >nul\r\n");
-    body += QStringLiteral("copy /Y \"%SRC%\\Qt6Core.dll\" \"%RUNTIME%\\\" >nul\r\n");
-    body += QStringLiteral("copy /Y \"%SRC%\\Qt6Gui.dll\" \"%RUNTIME%\\\" >nul\r\n");
-    body += QStringLiteral("copy /Y \"%SRC%\\Qt6Widgets.dll\" \"%RUNTIME%\\\" >nul\r\n");
-    body += QStringLiteral("copy /Y \"%SRC%\\libgcc_s_seh-1.dll\" \"%RUNTIME%\\\" >nul\r\n");
-    body += QStringLiteral("copy /Y \"%SRC%\\libstdc++-6.dll\" \"%RUNTIME%\\\" >nul\r\n");
-    body += QStringLiteral("copy /Y \"%SRC%\\libwinpthread-1.dll\" \"%RUNTIME%\\\" >nul\r\n");
-    body += QStringLiteral(
-        "copy /Y \"%SRC%\\platforms\\qwindows.dll\" \"%RUNTIME%\\platforms\\\" >nul\r\n");
-    body += QStringLiteral(
-        "powershell -NoProfile -ExecutionPolicy Bypass -Command "
-        "\"Get-ChildItem -LiteralPath $env:LOCALAPPDATA\\StickyTodo\\runtime -Recurse -File "
-        "| Unblock-File\" >nul 2>&1\r\n");
-    body += QStringLiteral("if not exist \"%RUNTIME%\\StickyTodo.exe\" exit /b 1\r\n");
-    body += QStringLiteral(
-        "start \"\" /D \"%RUNTIME%\" \"%RUNTIME%\\StickyTodo.exe\" --data-dir \"%DATA%\"\r\n");
-
-    QSaveFile file(scriptPath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        return false;
-    const QByteArray bytes = body.toLocal8Bit();
-    if (file.write(bytes) != bytes.size())
-        return false;
-    return file.commit();
-}
-
-
-void appendHandoffLog(const QString &exeDir, const QString &line)
-{
+    // Diagnostics only: never used as a success signal for exiting this process.
     if (exeDir.isEmpty())
         return;
     const QString path = QDir(exeDir).filePath(QStringLiteral("StickyTodo-handoff.log"));
@@ -403,460 +287,6 @@ void appendHandoffLog(const QString &exeDir, const QString &line)
         return;
     f.write(line.toUtf8());
     f.write("\n");
-}
-
-bool launchHandoffViaWmi(const QString &scriptPath, const QString &workingDir, const QString &exeDir)
-{
-    // TR #15: WMI Win32_Process.Create is served out-of-proc and often starts the
-    // command at the interactive user's Medium IL when Low COM brokers are blocked.
-    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    bool shouldUninit = false;
-    if (hr == S_OK || hr == S_FALSE) {
-        shouldUninit = true;
-    } else if (hr != RPC_E_CHANGED_MODE) {
-        appendHandoffLog(exeDir, QStringLiteral("wmi: CoInitializeEx hr=0x%1")
-                                       .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
-        return false;
-    }
-
-    hr = CoInitializeSecurity(nullptr, -1, nullptr, nullptr, RPC_C_AUTHN_LEVEL_DEFAULT,
-                              RPC_C_IMP_LEVEL_IMPERSONATE, nullptr, EOAC_NONE, nullptr);
-    // RPC_E_TOO_LATE is fine if already set.
-    if (FAILED(hr) && hr != RPC_E_TOO_LATE) {
-        appendHandoffLog(exeDir, QStringLiteral("wmi: CoInitializeSecurity hr=0x%1")
-                                       .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
-        // continue — some hosts already configured security
-    }
-
-    IWbemLocator *locator = nullptr;
-    hr = CoCreateInstance(CLSID_WbemLocator, nullptr, CLSCTX_INPROC_SERVER, IID_IWbemLocator,
-                          reinterpret_cast<void **>(&locator));
-    if (FAILED(hr) || !locator) {
-        appendHandoffLog(exeDir, QStringLiteral("wmi: WbemLocator hr=0x%1")
-                                       .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    IWbemServices *services = nullptr;
-    BSTR ns = SysAllocString(L"ROOT\\CIMV2");
-    hr = locator->ConnectServer(ns, nullptr, nullptr, nullptr, 0, nullptr, nullptr, &services);
-    SysFreeString(ns);
-    locator->Release();
-    if (FAILED(hr) || !services) {
-        appendHandoffLog(exeDir, QStringLiteral("wmi: ConnectServer hr=0x%1")
-                                       .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    hr = CoSetProxyBlanket(services, RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE, nullptr,
-                           RPC_C_AUTHN_LEVEL_CALL, RPC_C_IMP_LEVEL_IMPERSONATE, nullptr,
-                           EOAC_NONE);
-    if (FAILED(hr)) {
-        appendHandoffLog(exeDir, QStringLiteral("wmi: ProxyBlanket hr=0x%1")
-                                       .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
-        services->Release();
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    IWbemClassObject *processClass = nullptr;
-    BSTR className = SysAllocString(L"Win32_Process");
-    hr = services->GetObject(className, 0, nullptr, &processClass, nullptr);
-    SysFreeString(className);
-    if (FAILED(hr) || !processClass) {
-        appendHandoffLog(exeDir, QStringLiteral("wmi: GetObject hr=0x%1")
-                                       .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
-        services->Release();
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    IWbemClassObject *inParamsDef = nullptr;
-    BSTR createName = SysAllocString(L"Create");
-    hr = processClass->GetMethod(createName, 0, &inParamsDef, nullptr);
-    processClass->Release();
-    if (FAILED(hr) || !inParamsDef) {
-        appendHandoffLog(exeDir, QStringLiteral("wmi: GetMethod hr=0x%1")
-                                       .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
-        SysFreeString(createName);
-        services->Release();
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    IWbemClassObject *inParams = nullptr;
-    hr = inParamsDef->SpawnInstance(0, &inParams);
-    inParamsDef->Release();
-    if (FAILED(hr) || !inParams) {
-        appendHandoffLog(exeDir, QStringLiteral("wmi: SpawnInstance hr=0x%1")
-                                       .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
-        SysFreeString(createName);
-        services->Release();
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    const QString cmdLine = QStringLiteral("cmd.exe /c \"\"%1\"\"")
-                                .arg(QDir::toNativeSeparators(scriptPath));
-    const QString work = QDir::toNativeSeparators(workingDir);
-    VARIANT vCmd;
-    VARIANT vDir;
-    VariantInit(&vCmd);
-    VariantInit(&vDir);
-    vCmd.vt = VT_BSTR;
-    vCmd.bstrVal = SysAllocString(cmdLine.toStdWString().c_str());
-    vDir.vt = VT_BSTR;
-    vDir.bstrVal = SysAllocString(work.toStdWString().c_str());
-    inParams->Put(L"CommandLine", 0, &vCmd, 0);
-    inParams->Put(L"CurrentDirectory", 0, &vDir, 0);
-    VariantClear(&vCmd);
-    VariantClear(&vDir);
-
-    IWbemClassObject *outParams = nullptr;
-    BSTR processPath = SysAllocString(L"Win32_Process");
-    hr = services->ExecMethod(processPath, createName, 0, nullptr, inParams, &outParams, nullptr);
-    SysFreeString(processPath);
-    SysFreeString(createName);
-    inParams->Release();
-    services->Release();
-
-    bool ok = false;
-    if (SUCCEEDED(hr) && outParams) {
-        VARIANT vRet;
-        VariantInit(&vRet);
-        if (SUCCEEDED(outParams->Get(L"ReturnValue", 0, &vRet, nullptr, nullptr))) {
-            if (vRet.vt == VT_I4)
-                ok = (vRet.lVal == 0);
-            else if (vRet.vt == VT_UI4)
-                ok = (vRet.ulVal == 0);
-            appendHandoffLog(exeDir, QStringLiteral("wmi: ReturnValue=%1 hr=0x%2")
-                                           .arg(vRet.vt == VT_I4 ? vRet.lVal : int(vRet.ulVal))
-                                           .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
-            VariantClear(&vRet);
-        }
-        outParams->Release();
-    } else {
-        appendHandoffLog(exeDir, QStringLiteral("wmi: ExecMethod hr=0x%1")
-                                       .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
-    }
-
-    if (shouldUninit)
-        CoUninitialize();
-    return ok;
-}
-
-bool launchHandoffViaTaskScheduler(const QString &scriptPath)
-{
-    // TR #15: Task Scheduler service starts the action at the interactive user's
-    // Medium IL. Works when in-proc / Explorer ShellExecute stays Low.
-    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    bool shouldUninit = false;
-    if (hr == S_OK || hr == S_FALSE) {
-        shouldUninit = true;
-    } else if (hr != RPC_E_CHANGED_MODE) {
-        return false;
-    }
-
-    ITaskService *service = nullptr;
-    hr = CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER,
-                          IID_ITaskService, reinterpret_cast<void **>(&service));
-    if (FAILED(hr) || !service) {
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    VARIANT vEmpty;
-    VariantInit(&vEmpty);
-    hr = service->Connect(vEmpty, vEmpty, vEmpty, vEmpty);
-    if (FAILED(hr)) {
-        service->Release();
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    BSTR rootPath = SysAllocString(L"\\");
-    ITaskFolder *folder = nullptr;
-    hr = service->GetFolder(rootPath, &folder);
-    SysFreeString(rootPath);
-    if (FAILED(hr) || !folder) {
-        service->Release();
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    const wchar_t kTaskName[] = L"StickyTodoHandoff";
-    BSTR taskName = SysAllocString(kTaskName);
-    folder->DeleteTask(taskName, 0); // ignore missing
-
-    ITaskDefinition *task = nullptr;
-    hr = service->NewTask(0, &task);
-    if (FAILED(hr) || !task) {
-        SysFreeString(taskName);
-        folder->Release();
-        service->Release();
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    IPrincipal *principal = nullptr;
-    if (SUCCEEDED(task->get_Principal(&principal)) && principal) {
-        principal->put_LogonType(TASK_LOGON_INTERACTIVE_TOKEN);
-        principal->put_RunLevel(TASK_RUNLEVEL_LUA);
-        principal->Release();
-    }
-
-    ITaskSettings *settings = nullptr;
-    if (SUCCEEDED(task->get_Settings(&settings)) && settings) {
-        settings->put_DisallowStartIfOnBatteries(VARIANT_FALSE);
-        settings->put_StopIfGoingOnBatteries(VARIANT_FALSE);
-        settings->put_AllowDemandStart(VARIANT_TRUE);
-        settings->put_StartWhenAvailable(VARIANT_TRUE);
-        settings->Release();
-    }
-
-    IActionCollection *actions = nullptr;
-    hr = task->get_Actions(&actions);
-    if (FAILED(hr) || !actions) {
-        task->Release();
-        SysFreeString(taskName);
-        folder->Release();
-        service->Release();
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    IAction *action = nullptr;
-    hr = actions->Create(TASK_ACTION_EXEC, &action);
-    actions->Release();
-    if (FAILED(hr) || !action) {
-        task->Release();
-        SysFreeString(taskName);
-        folder->Release();
-        service->Release();
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    IExecAction *execAction = nullptr;
-    hr = action->QueryInterface(IID_IExecAction, reinterpret_cast<void **>(&execAction));
-    action->Release();
-    if (FAILED(hr) || !execAction) {
-        task->Release();
-        SysFreeString(taskName);
-        folder->Release();
-        service->Release();
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    BSTR cmdPath = SysAllocString(L"cmd.exe");
-    const std::wstring args =
-        L"/c \"" + QDir::toNativeSeparators(scriptPath).toStdWString() + L"\"";
-    BSTR cmdArgs = SysAllocString(args.c_str());
-    execAction->put_Path(cmdPath);
-    execAction->put_Arguments(cmdArgs);
-    SysFreeString(cmdPath);
-    SysFreeString(cmdArgs);
-    execAction->Release();
-
-    VARIANT vUser;
-    VARIANT vPassword;
-    VARIANT vSddl;
-    VariantInit(&vUser);
-    VariantInit(&vPassword);
-    VariantInit(&vSddl);
-    IRegisteredTask *registered = nullptr;
-    hr = folder->RegisterTaskDefinition(taskName, task, TASK_CREATE_OR_UPDATE, vUser,
-                                        vPassword, TASK_LOGON_INTERACTIVE_TOKEN, vSddl,
-                                        &registered);
-    task->Release();
-    if (FAILED(hr) || !registered) {
-        SysFreeString(taskName);
-        folder->Release();
-        service->Release();
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    VARIANT vParams;
-    VariantInit(&vParams);
-    IRunningTask *running = nullptr;
-    hr = registered->Run(vParams, &running);
-    if (running)
-        running->Release();
-    registered->Release();
-    // Keep the task definition for overwrite next time; do not DeleteTask after
-    // Run — that can tear down the just-started action on some builds.
-    SysFreeString(taskName);
-    folder->Release();
-    service->Release();
-    if (shouldUninit)
-        CoUninitialize();
-    return SUCCEEDED(hr);
-}
-
-bool launchHandoffViaShellApplication(const QString &scriptPath, const QString &workingDir)
-{
-    // TR #15: CoCreateInstance(CLSID_Shell) from a Low process stays Low (in-proc
-    // or same-IL). Borrow IShellDispatch2 from the desktop explorer (Medium) via
-    // ShellWindows, then ShellExecute cmd /c handoff.cmd so the child is Medium.
-    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    bool shouldUninit = false;
-    if (hr == S_OK || hr == S_FALSE) {
-        shouldUninit = true;
-    } else if (hr == RPC_E_CHANGED_MODE) {
-        // Already initialized on another apartment model; proceed without uninit.
-    } else {
-        return false;
-    }
-
-    IShellWindows *windows = nullptr;
-    hr = CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_LOCAL_SERVER,
-                          IID_IShellWindows, reinterpret_cast<void **>(&windows));
-    if (FAILED(hr) || !windows) {
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    VARIANT vEmpty;
-    VariantInit(&vEmpty);
-    long desktopHwnd = 0;
-    IDispatch *desktopDisp = nullptr;
-    hr = windows->FindWindowSW(&vEmpty, &vEmpty, SWC_DESKTOP, &desktopHwnd,
-                               SWFO_NEEDDISPATCH, &desktopDisp);
-    windows->Release();
-    if (hr != S_OK || !desktopDisp) {
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    IServiceProvider *provider = nullptr;
-    hr = desktopDisp->QueryInterface(IID_IServiceProvider,
-                                     reinterpret_cast<void **>(&provider));
-    desktopDisp->Release();
-    if (FAILED(hr) || !provider) {
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    IShellBrowser *browser = nullptr;
-    hr = provider->QueryService(SID_STopLevelBrowser, IID_IShellBrowser,
-                                reinterpret_cast<void **>(&browser));
-    provider->Release();
-    if (FAILED(hr) || !browser) {
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    IShellView *view = nullptr;
-    hr = browser->QueryActiveShellView(&view);
-    browser->Release();
-    if (FAILED(hr) || !view) {
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    IDispatch *background = nullptr;
-    hr = view->GetItemObject(SVGIO_BACKGROUND, IID_IDispatch,
-                             reinterpret_cast<void **>(&background));
-    view->Release();
-    if (FAILED(hr) || !background) {
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    IShellFolderViewDual *folderView = nullptr;
-    hr = background->QueryInterface(IID_IShellFolderViewDual,
-                                    reinterpret_cast<void **>(&folderView));
-    background->Release();
-    if (FAILED(hr) || !folderView) {
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    IDispatch *appDisp = nullptr;
-    hr = folderView->get_Application(&appDisp);
-    folderView->Release();
-    if (FAILED(hr) || !appDisp) {
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    IShellDispatch2 *shell = nullptr;
-    hr = appDisp->QueryInterface(IID_IShellDispatch2,
-                                 reinterpret_cast<void **>(&shell));
-    appDisp->Release();
-    if (FAILED(hr) || !shell) {
-        if (shouldUninit)
-            CoUninitialize();
-        return false;
-    }
-
-    const std::wstring scriptNative =
-        QDir::toNativeSeparators(scriptPath).toStdWString();
-    const std::wstring dirNative =
-        QDir::toNativeSeparators(workingDir).toStdWString();
-    const std::wstring args = L"/c \"" + scriptNative + L"\"";
-
-    BSTR bstrFile = SysAllocString(L"cmd.exe");
-    VARIANT vArgs;
-    VARIANT vDir;
-    VARIANT vOp;
-    VARIANT vShow;
-    VariantInit(&vArgs);
-    VariantInit(&vDir);
-    VariantInit(&vOp);
-    VariantInit(&vShow);
-
-    vArgs.vt = VT_BSTR;
-    vArgs.bstrVal = SysAllocString(args.c_str());
-    vDir.vt = VT_BSTR;
-    vDir.bstrVal = SysAllocString(dirNative.c_str());
-    vOp.vt = VT_BSTR;
-    vOp.bstrVal = SysAllocString(L"open");
-    vShow.vt = VT_I4;
-    vShow.lVal = SW_HIDE;
-
-    bool ok = false;
-    if (bstrFile && vArgs.bstrVal && vDir.bstrVal && vOp.bstrVal) {
-        hr = shell->ShellExecute(bstrFile, vArgs, vDir, vOp, vShow);
-        ok = SUCCEEDED(hr);
-    }
-
-    VariantClear(&vArgs);
-    VariantClear(&vDir);
-    VariantClear(&vOp);
-    VariantClear(&vShow);
-    if (bstrFile)
-        SysFreeString(bstrFile);
-    shell->Release();
-    if (shouldUninit)
-        CoUninitialize();
-    return ok;
 }
 
 LSTATUS queryAutoStart(QString *command)
@@ -1192,63 +622,44 @@ void applyCommandLineDataDir()
 }
 
 
+bool isProcessLowIntegrity()
+{
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+        return false;
+
+    DWORD length = 0;
+    GetTokenInformation(token, TokenIntegrityLevel, nullptr, 0, &length);
+    if (length == 0) {
+        CloseHandle(token);
+        return false;
+    }
+    std::vector<unsigned char> buffer(length);
+    if (!GetTokenInformation(token, TokenIntegrityLevel, buffer.data(), length, &length)) {
+        CloseHandle(token);
+        return false;
+    }
+    CloseHandle(token);
+
+    auto *til = reinterpret_cast<TOKEN_MANDATORY_LABEL *>(buffer.data());
+    if (!til || !til->Label.Sid || !IsValidSid(til->Label.Sid))
+        return false;
+    const DWORD rid = *GetSidSubAuthority(
+        til->Label.Sid,
+        static_cast<DWORD>(*GetSidSubAuthorityCount(til->Label.Sid) - 1));
+    return rid < SECURITY_MANDATORY_MEDIUM_RID;
+}
+
 bool handoffIfLowIntegrity()
 {
+    // TR #15 product: Low cannot silently raise to Medium (WMI 0x80041003,
+    // Task Scheduler, Explorer Shell all failed). Never write handoff.cmd or
+    // return true — that exited as if a Medium child had taken over.
     if (!isProcessLowIntegrity())
         return false;
-
-    const QString exeDir = moduleDirectory();
-    if (exeDir.isEmpty())
-        return false;
-
-    const QString localApp = qEnvironmentVariable("LOCALAPPDATA").trimmed();
-    if (localApp.isEmpty())
-        return false;
-
-    const QString runtimeDir = QDir(localApp).filePath(QStringLiteral("StickyTodo/runtime"));
-    if (QDir::cleanPath(exeDir).compare(QDir::cleanPath(runtimeDir), Qt::CaseInsensitive) == 0)
-        return false; // already the medium runtime — do not loop
-
-    QString dataDir = qEnvironmentVariable("STICKY_TODO_DATA_DIR").trimmed();
-    if (dataDir.isEmpty())
-        dataDir = QDir(exeDir).filePath(QStringLiteral("config"));
-
-    // TR #16: if package config is RO / unwritable, handoff must not pin
-    // --data-dir there — use LocalAppData\StickyTodo\data and migrate JSON.
-    if (!ensureDirectoryWritable(dataDir)) {
-        const QString fallback = stickyTodoLocalDataDir();
-        if (ensureDirectoryWritable(fallback)) {
-            migrateDataFiles(dataDir, fallback);
-            dataDir = fallback;
-        }
-    }
-
-    // Prefer exe-sibling, then %LOCALAPPDATA%\Temp, then GetTempPath — Low
-    // cannot write medium TEMP, so each candidate is probed with a real write.
-    const QString scriptPath = chooseWritableHandoffScriptPath(exeDir, localApp);
-    if (scriptPath.isEmpty())
-        return false;
-    if (!writeHandoffScript(scriptPath, exeDir, dataDir))
-        return false;
-
-    // TR #15: Low→Medium brokers (MIC may block some). Order: WMI, Task Scheduler,
-    // Explorer Shell. Log failures beside the exe for 小测.
-    appendHandoffLog(exeDir, QStringLiteral("handoff: begin script=%1")
-                                   .arg(QDir::toNativeSeparators(scriptPath)));
-    if (launchHandoffViaWmi(scriptPath, exeDir, exeDir)) {
-        appendHandoffLog(exeDir, QStringLiteral("handoff: WMI ok"));
-        return true;
-    }
-    if (launchHandoffViaTaskScheduler(scriptPath)) {
-        appendHandoffLog(exeDir, QStringLiteral("handoff: TaskScheduler ok"));
-        return true;
-    }
-    appendHandoffLog(exeDir, QStringLiteral("handoff: TaskScheduler failed"));
-    if (launchHandoffViaShellApplication(scriptPath, exeDir)) {
-        appendHandoffLog(exeDir, QStringLiteral("handoff: ExplorerShell ok"));
-        return true;
-    }
-    appendHandoffLog(exeDir, QStringLiteral("handoff: all brokers failed"));
+    appendIntegrityLog(
+        moduleDirectory(),
+        QStringLiteral("handoff: skipped — Low IL cannot silently raise to Medium; continue in-process"));
     return false;
 }
 

@@ -228,6 +228,45 @@ QString elidedOneLine(const QString &text, int width, const QFont &font)
     return QFontMetrics(font).elidedText(text, Qt::ElideRight, width);
 }
 
+class IntegrityBanner : public QWidget
+{
+public:
+    explicit IntegrityBanner(QWidget *parent = nullptr)
+        : QWidget(parent)
+    {
+        setAttribute(Qt::WA_NoSystemBackground);
+        setAttribute(Qt::WA_TranslucentBackground, false);
+        setAttribute(Qt::WA_NativeWindow, false);
+        setAutoFillBackground(false);
+        setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
+
+        auto *layout = new QHBoxLayout(this);
+        layout->setContentsMargins(10, 7, 10, 7);
+        layout->setSpacing(0);
+        auto *label = new QLabel(this);
+        label->setWordWrap(true);
+        label->setTextFormat(Qt::PlainText);
+        label->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        label->setFont(Theme::uiFont(10));
+        label->setStyleSheet(QStringLiteral("color: %1; background: transparent;")
+                                 .arg(Theme::Danger.name()));
+        label->setText(QStringLiteral(
+            "当前为低完整性运行，系统托盘通常不可用。请改用本目录的 Start StickyTodo.cmd 启动。"
+            "点 × 将保存并退出。"));
+        layout->addWidget(label);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(QPen(QColor(188, 103, 79, 90), 1.0));
+        painter.setBrush(Theme::DangerSoft);
+        painter.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 8, 8);
+    }
+};
+
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent)
@@ -508,6 +547,11 @@ void MainWindow::buildUi()
     m_searchBox->setPlaceholderText(QStringLiteral("搜索待办…"));
     headerLayout->addWidget(m_searchBox);
     headerLayout->addSpacing(8);
+    m_integrityBanner = new IntegrityBanner(m_header);
+    m_integrityBanner->setVisible(WinUtils::isProcessLowIntegrity());
+    headerLayout->addWidget(m_integrityBanner);
+    if (m_integrityBanner->isVisible())
+        headerLayout->addSpacing(8);
     cardLayout->addWidget(m_header);
 
     auto *bodyRow = new QWidget(m_card);
@@ -897,6 +941,7 @@ void MainWindow::ensureTrayIcon()
         if (m_trayAttempts < 20)
             QTimer::singleShot(500, this, &MainWindow::ensureTrayIcon);
         ++m_trayAttempts;
+        updateTrayState();
         return;
     }
 
@@ -914,14 +959,16 @@ void MainWindow::ensureTrayIcon()
     if ((!ok || !promoted) && !denied && m_trayAttempts < 15) {
         ++m_trayAttempts;
         QTimer::singleShot(400, this, &MainWindow::ensureTrayIcon);
+        updateTrayState();
         return;
     }
-    if (!m_trayInstalled) {
+    if (!m_trayInstalled && !WinUtils::isProcessLowIntegrity()) {
         const QString message = denied
-            ? QStringLiteral("系统托盘不可用（常见于低完整性）。点 × 将保存并退出；也可试 Start StickyTodo.cmd。")
+            ? QStringLiteral("系统托盘不可用（常见于低完整性）。请用 Start StickyTodo.cmd 启动；点 × 将保存并退出。")
             : QStringLiteral("托盘不可用：%1。点 × 将保存并退出。").arg(detail);
         showToast(message, QString(), {}, 8000);
     }
+    updateTrayState();
 }
 
 void MainWindow::paintEvent(QPaintEvent *event)
@@ -1477,18 +1524,26 @@ void MainWindow::updateTrayState()
     if (m_trayHideAction)
         m_trayHideAction->setEnabled(isVisible() && !isMinimized() && WinUtils::trayAvailable());
     if (m_hideButton) {
-        if (WinUtils::trayAvailable()) {
+        if (m_trayInstalled) {
             m_hideButton->setToolTip(QStringLiteral("隐藏到托盘（程序继续运行）"));
-        } else {
+        } else if (WinUtils::isProcessLowIntegrity()) {
+            m_hideButton->setToolTip(QStringLiteral("低完整性无托盘：将保存并退出。请用 Start StickyTodo.cmd 启动"));
+        } else if (!WinUtils::trayAvailable()) {
             // Linux stub / no tray: hide routes to save+quit.
             m_hideButton->setToolTip(QStringLiteral("系统托盘不可用：将保存并退出"));
+        } else {
+            m_hideButton->setToolTip(QStringLiteral("隐藏到托盘（程序继续运行）"));
         }
     }
     if (m_closeButton) {
-        if (WinUtils::trayAvailable()) {
+        if (m_trayInstalled) {
             m_closeButton->setToolTip(QStringLiteral("隐藏到托盘；真正退出请用托盘菜单"));
-        } else {
+        } else if (WinUtils::isProcessLowIntegrity()) {
+            m_closeButton->setToolTip(QStringLiteral("低完整性无托盘：将保存并退出。请用 Start StickyTodo.cmd 启动"));
+        } else if (!WinUtils::trayAvailable()) {
             m_closeButton->setToolTip(QStringLiteral("系统托盘不可用：将保存并退出"));
+        } else {
+            m_closeButton->setToolTip(QStringLiteral("隐藏到托盘；真正退出请用托盘菜单"));
         }
     }
     if (m_trayAutoStartAction) {
@@ -2214,7 +2269,6 @@ void MainWindow::hideToTray()
     if (!m_trayInstalled) {
         // Tray shell exists but icon install failed (e.g. low integrity on Win).
         // No tray menu "退出" path — save+quit so X/— never strand the user.
-        // Aligns with button tooltips: 系统托盘不可用：将保存并退出.
         quitApplication();
         return;
     }

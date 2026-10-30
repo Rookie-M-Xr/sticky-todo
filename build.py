@@ -85,8 +85,6 @@ LDFLAGS = [
     "-luuid",
     "-luser32",
     "-lshell32",
-    "-ltaskschd",
-    "-lwbemuuid",
     "-ladvapi32",
     "-ldwmapi",
     "-lversion",
@@ -231,10 +229,8 @@ def main() -> int:
         if file.is_file():
             strip_downloaded_mark(file)
 
-    # The project directory carries a low integrity label, so running the exe
-    # from dist drops the process to low integrity and Windows rejects its
-    # tray icon. Keep a medium-integrity copy under LocalAppData; a low launch
-    # hands off to it.
+    # Start StickyTodo.cmd copies the package to a Medium-IL runtime under
+    # LocalAppData. Keep that copy current after each local build.
     install_medium_runtime(DIST)
 
     print()

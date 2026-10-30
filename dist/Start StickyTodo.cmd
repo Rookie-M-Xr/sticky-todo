@@ -1,9 +1,9 @@
 @echo off
 setlocal
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$d = Split-Path -Parent '%~f0'; Get-ChildItem -LiteralPath $d -Recurse -File | Unblock-File"
-rem Fallback launcher: prefer medium-integrity copy under LocalAppData (same as
-rem in-app low-IL handoff). StickyTodo.exe self-heals when double-clicked; this
-rem script remains an optional unblock + start path.
+rem Recommended launcher: copy to a medium-integrity runtime under LocalAppData
+rem and start with --data-dir pointing at this package's config. Double-clicking
+rem StickyTodo.exe from a Low-labeled folder stays Low (no silent self-heal).
 set "RUNTIME_DIR=%LOCALAPPDATA%\StickyTodo\runtime"
 set "RUNTIME=%RUNTIME_DIR%\StickyTodo.exe"
 set "DATA=%~dp0config"
