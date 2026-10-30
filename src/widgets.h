@@ -187,3 +187,36 @@ private:
     std::function<void()> m_action;
     bool m_hiding = false;
 };
+
+class SideNavBar : public QWidget
+{
+    Q_OBJECT
+public:
+    enum class Tab {
+        Todos = 0,
+        Daily,
+        Weekly,
+        Monthly
+    };
+
+    explicit SideNavBar(QWidget *parent = nullptr);
+
+    void setTabVisible(Tab tab, bool visible);
+    void setCurrentTab(Tab tab);
+    Tab currentTab() const { return m_current; }
+
+signals:
+    void tabSelected(Tab tab);
+
+protected:
+    void paintEvent(QPaintEvent *event) override;
+
+private:
+    void onButtonClicked(Tab tab);
+
+    QAbstractButton *m_todos = nullptr;
+    QAbstractButton *m_daily = nullptr;
+    QAbstractButton *m_weekly = nullptr;
+    QAbstractButton *m_monthly = nullptr;
+    Tab m_current = Tab::Todos;
+};

@@ -301,7 +301,7 @@ MainWindow::MainWindow(QWidget *parent)
             || (m_monthlyVisible && !s.showMonthlyReport)) {
             closeOverlayPage();
         }
-        updateReportButtons();
+        updateSideNav();
         updateHeader();
         updateTrayState();
         const bool top = s.alwaysOnTop;
@@ -399,7 +399,7 @@ MainWindow::MainWindow(QWidget *parent)
     scheduleMidnightRefresh();
     qApp->installNativeEventFilter(this);
     m_startupNoticesPending = true;
-    updateReportButtons();
+    updateSideNav();
 
     if (!loaded) {
         showToast(QStringLiteral("数据目录不可用，修改可能无法保存。"), QString(), {}, 9000);
@@ -487,18 +487,6 @@ void MainWindow::buildUi()
     m_pinButton->hide();
     topRow->addWidget(m_pinButton, 0, Qt::AlignVCenter);
 
-    m_dailyButton = new IconButton(AppIcon::Calendar, 26, 16, m_header);
-    m_dailyButton->setToolTip(QStringLiteral("日报"));
-    topRow->addWidget(m_dailyButton, 0, Qt::AlignVCenter);
-
-    m_weeklyButton = new IconButton(AppIcon::Week, 26, 16, m_header);
-    m_weeklyButton->setToolTip(QStringLiteral("周报"));
-    topRow->addWidget(m_weeklyButton, 0, Qt::AlignVCenter);
-
-    m_monthlyButton = new IconButton(AppIcon::Month, 26, 16, m_header);
-    m_monthlyButton->setToolTip(QStringLiteral("月报"));
-    topRow->addWidget(m_monthlyButton, 0, Qt::AlignVCenter);
-
     m_settingsButton = new IconButton(AppIcon::Settings, 26, 17, m_header);
     m_settingsButton->setToolTip(QStringLiteral("设置"));
     topRow->addWidget(m_settingsButton, 0, Qt::AlignVCenter);
@@ -522,7 +510,18 @@ void MainWindow::buildUi()
     headerLayout->addSpacing(8);
     cardLayout->addWidget(m_header);
 
-    m_stack = new QStackedWidget(m_card);
+    auto *bodyRow = new QWidget(m_card);
+    bodyRow->setAttribute(Qt::WA_NoSystemBackground);
+    bodyRow->setAttribute(Qt::WA_TranslucentBackground, false);
+    bodyRow->setAutoFillBackground(false);
+    auto *bodyLayout = new QHBoxLayout(bodyRow);
+    bodyLayout->setContentsMargins(0, 0, 0, 0);
+    bodyLayout->setSpacing(0);
+
+    m_sideNav = new SideNavBar(bodyRow);
+    bodyLayout->addWidget(m_sideNav, 0);
+
+    m_stack = new QStackedWidget(bodyRow);
     m_stack->setAttribute(Qt::WA_NoSystemBackground);
     m_stack->setAttribute(Qt::WA_TranslucentBackground, false);
     m_stack->setAutoFillBackground(false);
@@ -540,7 +539,8 @@ void MainWindow::buildUi()
     m_stack->addWidget(m_dailyPage);
     m_stack->addWidget(m_weeklyPage);
     m_stack->addWidget(m_monthlyPage);
-    cardLayout->addWidget(m_stack, 1);
+    bodyLayout->addWidget(m_stack, 1);
+    cardLayout->addWidget(bodyRow, 1);
 
     auto *composerWrap = new QWidget(m_card);
     composerWrap->setAttribute(Qt::WA_NoSystemBackground);
@@ -589,9 +589,22 @@ void MainWindow::buildUi()
                                 : QDate::currentDate());
 
     connect(m_backButton, &QAbstractButton::clicked, this, &MainWindow::closeOverlayPage);
-    connect(m_dailyButton, &QAbstractButton::clicked, this, &MainWindow::openDailyPage);
-    connect(m_weeklyButton, &QAbstractButton::clicked, this, &MainWindow::openWeeklyPage);
-    connect(m_monthlyButton, &QAbstractButton::clicked, this, &MainWindow::openMonthlyPage);
+    connect(m_sideNav, &SideNavBar::tabSelected, this, [this](SideNavBar::Tab tab) {
+        switch (tab) {
+        case SideNavBar::Tab::Todos:
+            closeOverlayPage();
+            break;
+        case SideNavBar::Tab::Daily:
+            openDailyPage();
+            break;
+        case SideNavBar::Tab::Weekly:
+            openWeeklyPage();
+            break;
+        case SideNavBar::Tab::Monthly:
+            openMonthlyPage();
+            break;
+        }
+    });
     connect(m_settingsButton, &QAbstractButton::clicked, this, &MainWindow::openSettingsPage);
     connect(m_pinButton, &QAbstractButton::clicked, this, &MainWindow::togglePin);
     connect(m_hideButton, &QAbstractButton::clicked, this, &MainWindow::minimizeToTray);
@@ -1415,10 +1428,10 @@ void MainWindow::updateHeader()
     }
 
     const bool overlay = m_settingsVisible || reportOverlayVisible();
-    m_backButton->setVisible(overlay);
+    m_backButton->setVisible(m_settingsVisible);
     m_searchBox->setVisible(!overlay);
     m_settingsButton->setVisible(!overlay);
-    updateReportButtons();
+    updateSideNav();
     m_pinButton->setVisible(!overlay);
     updatePinButton();
     updateTrayState();
@@ -1920,16 +1933,26 @@ bool MainWindow::reportOverlayVisible() const
     return m_dailyVisible || m_weeklyVisible || m_monthlyVisible;
 }
 
-void MainWindow::updateReportButtons()
+void MainWindow::updateSideNav()
 {
-    const bool overlay = m_settingsVisible || reportOverlayVisible();
+    if (!m_sideNav)
+        return;
     const AppSettings &settings = m_store ? m_store->settings() : AppSettings();
-    if (m_dailyButton)
-        m_dailyButton->setVisible(!overlay && settings.showDailyReport);
-    if (m_weeklyButton)
-        m_weeklyButton->setVisible(!overlay && settings.showWeeklyReport);
-    if (m_monthlyButton)
-        m_monthlyButton->setVisible(!overlay && settings.showMonthlyReport);
+    // Settings is a full overlay; hide the rail while it is open.
+    m_sideNav->setVisible(!m_settingsVisible);
+    m_sideNav->setTabVisible(SideNavBar::Tab::Todos, true);
+    m_sideNav->setTabVisible(SideNavBar::Tab::Daily, settings.showDailyReport);
+    m_sideNav->setTabVisible(SideNavBar::Tab::Weekly, settings.showWeeklyReport);
+    m_sideNav->setTabVisible(SideNavBar::Tab::Monthly, settings.showMonthlyReport);
+
+    SideNavBar::Tab current = SideNavBar::Tab::Todos;
+    if (m_dailyVisible)
+        current = SideNavBar::Tab::Daily;
+    else if (m_weeklyVisible)
+        current = SideNavBar::Tab::Weekly;
+    else if (m_monthlyVisible)
+        current = SideNavBar::Tab::Monthly;
+    m_sideNav->setCurrentTab(current);
 }
 
 void MainWindow::openDailyPage()

@@ -6,6 +6,7 @@
 #include <QEnterEvent>
 #include <QFontMetrics>
 #include <QGraphicsOpacityEffect>
+#include <QButtonGroup>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -653,4 +654,190 @@ void Snackbar::refreshGeometry()
         ? m_actionButton->sizeHint().width() + 4
         : 0;
     m_label->setMaximumWidth(qMax(40, width() - 28 - actionWidth));
+}
+
+namespace {
+
+class SideTabButton : public QAbstractButton
+{
+public:
+    explicit SideTabButton(const QString &label, QWidget *parent = nullptr)
+        : QAbstractButton(parent)
+        , m_label(label)
+    {
+        setCheckable(true);
+        setCursor(Qt::PointingHandCursor);
+        setFocusPolicy(Qt::NoFocus);
+        setAttribute(Qt::WA_Hover, true);
+        setFixedWidth(34);
+        setMinimumHeight(52);
+        setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        setFont(Theme::uiFont(11, QFont::DemiBold));
+    }
+
+    QSize sizeHint() const override
+    {
+        const QFontMetrics metrics(font());
+        int textH = 0;
+        for (const QChar ch : m_label) {
+            if (ch.isSpace())
+                continue;
+            textH += metrics.height() - 2;
+        }
+        return QSize(34, qMax(52, textH + 16));
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        Q_UNUSED(event);
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+
+        const QRectF box = QRectF(rect()).adjusted(3, 2, -3, -2);
+        const bool active = isChecked();
+        const bool hover = underMouse() && isEnabled();
+
+        if (active) {
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(Theme::AccentSoft);
+            painter.drawRoundedRect(box, 8, 8);
+            painter.setPen(QPen(QColor(Theme::Accent.red(), Theme::Accent.green(),
+                                       Theme::Accent.blue(), 140),
+                                1.0));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRoundedRect(box.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8);
+        } else if (hover) {
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(99, 88, 55, 22));
+            painter.drawRoundedRect(box, 8, 8);
+        }
+
+        painter.setFont(font());
+        painter.setPen(active ? Theme::AccentDark : (hover ? Theme::Ink : Theme::InkSoft));
+
+        QString chars;
+        chars.reserve(m_label.size());
+        for (const QChar ch : m_label) {
+            if (!ch.isSpace())
+                chars.append(ch);
+        }
+        const QFontMetrics metrics(font());
+        const int line = metrics.height() - 2;
+        const int totalH = chars.size() * line;
+        qreal y = (height() - totalH) / 2.0 + metrics.ascent();
+        for (const QChar ch : chars) {
+            const int w = metrics.horizontalAdvance(ch);
+            painter.drawText(QPointF((width() - w) / 2.0, y), QString(ch));
+            y += line;
+        }
+    }
+
+    void enterEvent(QEnterEvent *event) override
+    {
+        QAbstractButton::enterEvent(event);
+        update();
+    }
+
+    void leaveEvent(QEvent *event) override
+    {
+        QAbstractButton::leaveEvent(event);
+        update();
+    }
+
+private:
+    QString m_label;
+};
+
+} // namespace
+
+SideNavBar::SideNavBar(QWidget *parent)
+    : QWidget(parent)
+{
+    setAttribute(Qt::WA_NoSystemBackground);
+    setAttribute(Qt::WA_TranslucentBackground, false);
+    setAutoFillBackground(false);
+    setFixedWidth(40);
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+
+    auto *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(2, 4, 2, 8);
+    layout->setSpacing(4);
+
+    auto make = [this, layout](const QString &label, Tab tab) {
+        auto *btn = new SideTabButton(label, this);
+        layout->addWidget(btn, 0, Qt::AlignHCenter);
+        connect(btn, &QAbstractButton::clicked, this, [this, tab] { onButtonClicked(tab); });
+        return static_cast<QAbstractButton *>(btn);
+    };
+
+    m_todos = make(QStringLiteral("主待办"), Tab::Todos);
+    m_daily = make(QStringLiteral("日报"), Tab::Daily);
+    m_weekly = make(QStringLiteral("周报"), Tab::Weekly);
+    m_monthly = make(QStringLiteral("月报"), Tab::Monthly);
+    layout->addStretch(1);
+
+    auto *group = new QButtonGroup(this);
+    group->setExclusive(true);
+    group->addButton(m_todos);
+    group->addButton(m_daily);
+    group->addButton(m_weekly);
+    group->addButton(m_monthly);
+
+    setCurrentTab(Tab::Todos);
+}
+
+void SideNavBar::setTabVisible(Tab tab, bool visible)
+{
+    QAbstractButton *btn = nullptr;
+    switch (tab) {
+    case Tab::Todos:
+        btn = m_todos;
+        break;
+    case Tab::Daily:
+        btn = m_daily;
+        break;
+    case Tab::Weekly:
+        btn = m_weekly;
+        break;
+    case Tab::Monthly:
+        btn = m_monthly;
+        break;
+    }
+    if (btn)
+        btn->setVisible(visible);
+}
+
+void SideNavBar::setCurrentTab(Tab tab)
+{
+    m_current = tab;
+    if (m_todos)
+        m_todos->setChecked(tab == Tab::Todos);
+    if (m_daily)
+        m_daily->setChecked(tab == Tab::Daily);
+    if (m_weekly)
+        m_weekly->setChecked(tab == Tab::Weekly);
+    if (m_monthly)
+        m_monthly->setChecked(tab == Tab::Monthly);
+}
+
+void SideNavBar::onButtonClicked(Tab tab)
+{
+    if (tab == m_current)
+        return;
+    setCurrentTab(tab);
+    emit tabSelected(tab);
+}
+
+void SideNavBar::paintEvent(QPaintEvent *event)
+{
+    Q_UNUSED(event);
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    // Soft divider on the right edge of the rail.
+    painter.setPen(QPen(QColor(Theme::PaperLine.red(), Theme::PaperLine.green(),
+                               Theme::PaperLine.blue(), 160),
+                        1.0));
+    const qreal x = width() - 0.5;
+    painter.drawLine(QPointF(x, 8), QPointF(x, height() - 10));
 }

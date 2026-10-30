@@ -30,6 +30,7 @@ class QTimer;
 class SearchBox;
 class SettingsPage;
 class DailyReportPage;
+class SideNavBar;
 class Snackbar;
 class TodoScrollView;
 class QWidget;
@@ -101,7 +102,7 @@ private:
     void openMonthlyPage();
     void openReportPage(ReportKind kind);
     void closeOverlayPage();
-    void updateReportButtons();
+    void updateSideNav();
     bool reportOverlayVisible() const;
     void togglePin();
     void handleDockRequest(int side);
@@ -150,9 +151,7 @@ private:
     DailyReportPage *m_dailyPage = nullptr;
     DailyReportPage *m_weeklyPage = nullptr;
     DailyReportPage *m_monthlyPage = nullptr;
-    IconButton *m_dailyButton = nullptr;
-    IconButton *m_weeklyButton = nullptr;
-    IconButton *m_monthlyButton = nullptr;
+    SideNavBar *m_sideNav = nullptr;
     QWidget *m_composerBar = nullptr;
     QLineEdit *m_composer = nullptr;
     DateChip *m_composerDate = nullptr;
