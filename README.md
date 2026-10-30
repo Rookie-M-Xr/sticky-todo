@@ -109,6 +109,18 @@ $env:STICKY_TODO_DATA_DIR = "$PWD\testdata"
 - `docs: README 去掉本机绝对路径`
 - `chore: 构建脚本改为仅使用环境变量`
 
+## Issue 标签
+
+开源协作用 GitHub Issue。标签分三类，可并存；**优先级只挂一个 P**：
+
+| 类 | Labels | 说明 |
+|----|--------|------|
+| 类型 | `bug` / `enhancement` / `chore` / `documentation` | 问题性质 |
+| 状态 | `doing` → `finish` → `test` | 流转；关单后去掉状态 label |
+| 优先级 | `P0` … `P8`（只挂一个） | `P0` 最高；调序只改 label，标题不写 Px |
+
+标题写清楚现象即可。外来 Issue 由维护者按内容挂 P。
+
 ## 发布
 
 正式发版约定见 [`docs/RELEASE.md`](docs/RELEASE.md)（SemVer、`vX.Y.Z` tag 须推远程、CHANGELOG、GitHub Release、Win zip / Linux tar 文件名带版本）。
