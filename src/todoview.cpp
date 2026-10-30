@@ -128,22 +128,21 @@ protected:
         painter.setFont(Theme::uiFont(12));
         painter.setPen(Theme::Muted);
         const int textWidth = qMax(80, width() - 44);
-        QString subtitle;
         if (m_searching) {
             const QString shown = elideQuery(m_query, font(), textWidth - 12);
-            subtitle = shown.isEmpty() ? QStringLiteral("换个关键词试试，或者清空搜索。")
+            const QString subtitle = shown.isEmpty() ? QStringLiteral("换个关键词试试，或者清空搜索。")
                                        : QStringLiteral("没有找到“%1”，换个关键词试试。").arg(shown);
+            painter.drawText(QRect(22, 136, width() - 44, 38),
+                             Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap, subtitle);
+            painter.setFont(Theme::uiFont(11));
+            painter.setPen(Theme::Faint);
+            painter.drawText(QRect(16, 225, width() - 32, 18), Qt::AlignHCenter,
+                             QStringLiteral("按 Esc 也可以清空搜索"));
         } else {
-            subtitle = QStringLiteral("把要做的事写下来，便签会替你记着。");
+            painter.drawText(QRect(22, 136, width() - 44, 38),
+                             Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
+                             QStringLiteral("在下方写下待办"));
         }
-        painter.drawText(QRect(22, 136, width() - 44, 38),
-                         Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap, subtitle);
-
-        painter.setFont(Theme::uiFont(11));
-        painter.setPen(Theme::Faint);
-        painter.drawText(QRect(16, 225, width() - 32, 18), Qt::AlignHCenter,
-                         m_searching ? QStringLiteral("按 Esc 也可以清空搜索")
-                                     : QStringLiteral("Ctrl + N 随时新建"));
     }
 
 private:
@@ -579,7 +578,6 @@ GroupHeader::GroupHeader(GroupId id, QWidget *parent)
     setCursor(Qt::PointingHandCursor);
     setAttribute(Qt::WA_Hover, true);
     setFocusPolicy(Qt::NoFocus);
-    setToolTip(QStringLiteral("点击展开或收起"));
 }
 
 void GroupHeader::setData(const QString &title, int pendingCount, bool expanded)

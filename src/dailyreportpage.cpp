@@ -44,19 +44,6 @@ QString emptyFor(ReportKind kind)
     return QString();
 }
 
-QString copiedFor(ReportKind kind)
-{
-    switch (kind) {
-    case ReportKind::Daily:
-        return QStringLiteral("已复制今日日报");
-    case ReportKind::Weekly:
-        return QStringLiteral("已复制本周周报");
-    case ReportKind::Monthly:
-        return QStringLiteral("已复制本月月报");
-    }
-    return QString();
-}
-
 } // namespace
 
 DailyReportPage::DailyReportPage(DataStore *store, ReportKind kind, QWidget *parent)
@@ -171,6 +158,6 @@ void DailyReportPage::copyPlainText()
     const QString text = m_store->formatReportPlainText(m_kind, QDate::currentDate());
     if (QClipboard *clip = QApplication::clipboard()) {
         clip->setText(text);
-        emit messageRequested(copiedFor(m_kind));
+        emit messageRequested(QStringLiteral("已复制"));
     }
 }
