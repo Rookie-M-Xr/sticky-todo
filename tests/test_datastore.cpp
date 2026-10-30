@@ -616,6 +616,33 @@ void testArchiveExpired()
         pass("archive expired + purge all");
 }
 
+void testTrayHideHintPersist()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "tray-hint: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    {
+        DataStore store;
+        expect(store.load(), "tray-hint: load");
+        expect(!store.settings().trayHideHintShown, "tray-hint: default off");
+        store.setTrayHideHintShown(true);
+        expect(store.settings().trayHideHintShown, "tray-hint: set");
+        expect(store.flush(), "tray-hint: flush");
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "tray-hint: reload");
+        expect(store.settings().trayHideHintShown, "tray-hint: persisted");
+    }
+
+    if (g_failed == before)
+        pass("tray hide hint persisted");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -631,6 +658,7 @@ int main(int argc, char *argv[])
     testWeeklyMonthlySnapshots();
     testArchiveExpired();
     testArchiveReimport();
+    testTrayHideHintPersist();
 
     if (g_failed != 0) {
         std::fprintf(stderr, "%d assertion(s) failed\n", g_failed);

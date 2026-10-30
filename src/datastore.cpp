@@ -724,6 +724,14 @@ void DataStore::setGlobalHotkey(const QString &hotkey)
     emit settingsChanged();
 }
 
+void DataStore::setTrayHideHintShown(bool shown)
+{
+    if (m_settings.trayHideHintShown == shown)
+        return;
+    m_settings.trayHideHintShown = shown;
+    scheduleSettingsSave(0);
+}
+
 void DataStore::setWindowState(const QRect &rect, const QString &screenName, int dockSide,
                                bool collapsed, bool pinned)
 {
@@ -808,6 +816,7 @@ void DataStore::saveSettingsNow()
     root.insert(QStringLiteral("showMonthlyReport"), m_settings.showMonthlyReport);
     root.insert(QStringLiteral("draft"), m_settings.draft);
     root.insert(QStringLiteral("globalHotkey"), m_settings.globalHotkey);
+    root.insert(QStringLiteral("trayHideHintShown"), m_settings.trayHideHintShown);
     root.insert(QStringLiteral("draftDue"),
                 m_settings.draftDue.isValid() ? m_settings.draftDue.toString(Qt::ISODate) : QString());
 
@@ -1003,6 +1012,7 @@ void DataStore::loadSettings()
         settings->showMonthlyReport = root.value(QStringLiteral("showMonthlyReport")).toBool(true);
         settings->draft = root.value(QStringLiteral("draft")).toString().left(1000);
         settings->globalHotkey = root.value(QStringLiteral("globalHotkey")).toString().trimmed();
+        settings->trayHideHintShown = root.value(QStringLiteral("trayHideHintShown")).toBool(false);
         const QString dueText = root.value(QStringLiteral("draftDue")).toString();
         settings->draftDue = QDate::fromString(dueText, Qt::ISODate);
         if (!settings->draftDue.isValid())
@@ -1133,6 +1143,7 @@ bool DataStore::reloadSettingsBackup(QString *warning)
     fallback.showMonthlyReport = root.value(QStringLiteral("showMonthlyReport")).toBool(true);
     fallback.draft = root.value(QStringLiteral("draft")).toString().left(1000);
     fallback.globalHotkey = root.value(QStringLiteral("globalHotkey")).toString().trimmed();
+    fallback.trayHideHintShown = root.value(QStringLiteral("trayHideHintShown")).toBool(false);
     fallback.draftDue = QDate::fromString(root.value(QStringLiteral("draftDue")).toString(), Qt::ISODate);
     if (!fallback.draftDue.isValid())
         fallback.draftDue = QDate::currentDate();

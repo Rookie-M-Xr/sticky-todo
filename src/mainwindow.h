@@ -189,7 +189,6 @@ private:
     bool m_quitting = false;
     bool m_forceDockCollapse = false;
     bool m_suppressHover = false;
-    bool m_firstHideHintShown = false;
     bool m_startupNoticesPending = false;
     bool m_applyingTopMost = false;
     bool m_lastTopMost = true;

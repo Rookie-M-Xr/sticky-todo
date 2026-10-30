@@ -150,7 +150,7 @@ public:
         setAttribute(Qt::WA_NativeWindow, false);
         setAutoFillBackground(false);
         setCursor(Qt::PointingHandCursor);
-        setToolTip(QStringLiteral("待办便签 · 点击展开，拖动可移出屏幕边缘"));
+        setToolTip(QStringLiteral("待办便签 · 可拖离屏幕边缘"));
     }
 
     void setData(int side, int pending, bool pinned)
@@ -251,8 +251,7 @@ public:
         label->setStyleSheet(QStringLiteral("color: %1; background: transparent;")
                                  .arg(Theme::Danger.name()));
         label->setText(QStringLiteral(
-            "当前为低完整性运行，系统托盘通常不可用。请改用本目录的 Start StickyTodo.cmd 启动。"
-            "点 × 将保存并退出。"));
+            "托盘不可用（低完整性）。点 × 退出；或用 Start StickyTodo.cmd。"));
         layout->addWidget(label);
     }
 
@@ -964,7 +963,7 @@ void MainWindow::ensureTrayIcon()
     }
     if (!m_trayInstalled && !WinUtils::isProcessLowIntegrity()) {
         const QString message = denied
-            ? QStringLiteral("系统托盘不可用（常见于低完整性）。请用 Start StickyTodo.cmd 启动；点 × 将保存并退出。")
+            ? QStringLiteral("托盘不可用（低完整性）。点 × 退出；或用 Start StickyTodo.cmd。")
             : QStringLiteral("托盘不可用：%1。点 × 将保存并退出。").arg(detail);
         showToast(message, QString(), {}, 8000);
     }
@@ -1065,10 +1064,6 @@ void MainWindow::showEvent(QShowEvent *event)
         if (!notices.isEmpty()) {
             QTimer::singleShot(450, this, [this, notices] {
                 showToast(notices.join(QStringLiteral("；")), QString(), {}, 9000);
-            });
-        } else if (m_store->todos().isEmpty()) {
-            QTimer::singleShot(600, this, [this] {
-                showToast(QStringLiteral("把要做的事写在下边，按 Enter 保存。"), QString(), {}, 4500);
             });
         }
     }
@@ -1580,9 +1575,6 @@ void MainWindow::applyAutoStart(bool enabled, bool quiet)
     const bool ok = WinUtils::setAutoStart(enabled, &error, m_store->dataDir());
     if (ok) {
         m_store->setAutoStartPreference(enabled);
-        if (!quiet)
-            showToast(enabled ? QStringLiteral("已开启开机自动启动")
-                              : QStringLiteral("已关闭开机自动启动"));
     } else {
         const bool actual = WinUtils::autoStartEnabled();
         m_store->setAutoStartPreference(actual);
@@ -2288,10 +2280,10 @@ void MainWindow::hideToTray()
         m_hoverTimer->stop();
     hide();
     updateTrayState();
-    if (!m_firstHideHintShown) {
+    if (m_store && !m_store->settings().trayHideHintShown) {
         WinUtils::showTrayBalloon(this, QStringLiteral("Sticky Todo"),
                                   QStringLiteral("便签仍在后台运行，可从托盘图标重新打开。"));
-        m_firstHideHintShown = true;
+        m_store->setTrayHideHintShown(true);
     }
 }
 
@@ -2358,10 +2350,6 @@ void MainWindow::applyGlobalHotkey(bool quiet)
         WinUtils::clearGlobalHotkey();
         return;
     }
-    if (!quiet && !normalized.isEmpty())
-        showToast(QStringLiteral("全局热键已设为 %1").arg(normalized));
-    else if (!quiet && normalized.isEmpty())
-        showToast(QStringLiteral("已关闭全局热键"));
 }
 
 void MainWindow::finishQuit()
@@ -2558,9 +2546,7 @@ void MainWindow::handleDelete(const QString &id)
     const QString label = elidedOneLine(removed.text, 30, Theme::uiFont(12));
     showToast(QStringLiteral("已删除“%1”").arg(label), QStringLiteral("撤销"),
               [this, removed, index] {
-                  if (m_store->restoreTodo(removed, index))
-                      showToast(QStringLiteral("已恢复待办"));
-                  else
+                  if (!m_store->restoreTodo(removed, index))
                       showToast(QStringLiteral("恢复失败，原条目可能已存在。"));
               },
               7000);

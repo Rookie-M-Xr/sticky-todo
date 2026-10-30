@@ -28,6 +28,8 @@ struct AppSettings {
     QDate draftDue;
     // Empty = off. Normalized form e.g. "Ctrl+Alt+T".
     QString globalHotkey;
+    // True after the first "still running in tray" balloon; never balloon again.
+    bool trayHideHintShown = false;
     QHash<QString, bool> groupExpanded;
 };
 
@@ -119,6 +121,7 @@ public:
     void setCollapsed(bool collapsed);
     void setPinned(bool pinned);
     void setGlobalHotkey(const QString &hotkey);
+    void setTrayHideHintShown(bool shown);
     void setWindowState(const QRect &rect, const QString &screenName, int dockSide,
                         bool collapsed, bool pinned);
 

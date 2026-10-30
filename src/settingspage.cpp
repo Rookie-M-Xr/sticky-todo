@@ -5,6 +5,7 @@
 #include "widgets.h"
 #include "winutils.h"
 
+#include <QAbstractButton>
 #include <QButtonGroup>
 #include <QDir>
 #include <QFontMetrics>
@@ -12,6 +13,7 @@
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPainter>
 #include <QPushButton>
 #include <QScrollArea>
@@ -147,6 +149,19 @@ QPushButton *dockButton(const QString &text, QWidget *parent)
     return button;
 }
 
+bool confirmIrreversible(QWidget *parent, const QString &title, const QString &text)
+{
+    QMessageBox box(parent);
+    box.setWindowTitle(title);
+    box.setIcon(QMessageBox::Warning);
+    box.setText(text);
+    QPushButton *ok = box.addButton(QStringLiteral("确定"), QMessageBox::AcceptRole);
+    QPushButton *cancel = box.addButton(QStringLiteral("取消"), QMessageBox::RejectRole);
+    box.setDefaultButton(cancel);
+    box.exec();
+    return box.clickedButton() == ok;
+}
+
 } // namespace
 
 SettingsPage::SettingsPage(DataStore *store, QWidget *parent)
@@ -188,17 +203,6 @@ void SettingsPage::buildUi()
     m_contentLayout->setSpacing(7);
     m_contentLayout->setAlignment(Qt::AlignTop);
 
-    auto *intro = new QLabel(QStringLiteral("把便签调成顺手的样子。"), m_content);
-    intro->setFont(Theme::uiFont(13, QFont::DemiBold));
-    intro->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(Theme::Ink.name()));
-    m_contentLayout->addWidget(intro);
-
-    auto *introSub = new QLabel(QStringLiteral("所有修改都会立即保存在本机。"), m_content);
-    introSub->setFont(Theme::uiFont(10));
-    introSub->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(Theme::Muted.name()));
-    m_contentLayout->addWidget(introSub);
-    m_contentLayout->addSpacing(4);
-
     m_contentLayout->addWidget(sectionLabel(QStringLiteral("外观与行为"), m_content));
     m_contentLayout->addWidget(buildGeneralCard());
     m_contentLayout->addWidget(sectionLabel(QStringLiteral("汇报"), m_content));
@@ -209,13 +213,6 @@ void SettingsPage::buildUi()
     m_contentLayout->addWidget(buildDataCard());
     m_contentLayout->addWidget(sectionLabel(QStringLiteral("关于"), m_content));
     m_contentLayout->addWidget(buildAboutCard());
-
-    auto *footer = new QLabel(QStringLiteral("无账户 · 无同步 · 无遥测"), m_content);
-    footer->setAlignment(Qt::AlignHCenter);
-    footer->setFont(Theme::uiFont(9));
-    footer->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(Theme::Faint.name()));
-    footer->setContentsMargins(0, 5, 0, 0);
-    m_contentLayout->addWidget(footer);
     m_contentLayout->addStretch(1);
 
     m_scroll->setWidget(m_content);
@@ -230,7 +227,7 @@ QWidget *SettingsPage::buildGeneralCard()
     m_topSwitch = new SwitchButton(card);
     m_topSwitch->setToolTip(QStringLiteral("让便签保持在其他窗口前面"));
     auto *topRow = new SettingRow(QStringLiteral("窗口置顶"),
-                                  QStringLiteral("让便签一直待在其他窗口前面"),
+                                  QStringLiteral("始终在最前"),
                                   m_topSwitch, card);
     body->addWidget(topRow);
     connect(m_topSwitch, &QAbstractButton::clicked, this, [this](bool on) {
@@ -242,7 +239,7 @@ QWidget *SettingsPage::buildGeneralCard()
 
     m_autoHideSwitch = new SwitchButton(card);
     auto *hideRow = new SettingRow(QStringLiteral("贴边自动收起"),
-                                   QStringLiteral("拖到屏幕边缘后自动收成窄标签"),
+                                   QStringLiteral("贴边后收成窄标签"),
                                    m_autoHideSwitch, card);
     body->addWidget(hideRow);
     connect(m_autoHideSwitch, &QAbstractButton::clicked, this, [this](bool on) {
@@ -254,7 +251,7 @@ QWidget *SettingsPage::buildGeneralCard()
 
     m_autoStartSwitch = new SwitchButton(card);
     auto *startRow = new SettingRow(QStringLiteral("开机自动启动"),
-                                    QStringLiteral("登录 Windows 后自动运行，仅当前用户。推荐用 Start StickyTodo.cmd 启动"),
+                                    QStringLiteral("登录后自动运行（当前用户）"),
                                     m_autoStartSwitch, card);
     body->addWidget(startRow);
     connect(m_autoStartSwitch, &QAbstractButton::clicked, this, [this](bool on) {
@@ -289,7 +286,7 @@ QWidget *SettingsPage::buildGeneralCard()
     hotkeyLayout->addWidget(m_hotkeyClearAction);
 
     auto *hotkeyRow = new SettingRow(QStringLiteral("全局快捷键"),
-                                     QStringLiteral("显示/隐藏便签（有托盘时隐藏进托盘）"),
+                                     QStringLiteral("显示或隐藏便签"),
                                      hotkeyBox, card);
     body->addWidget(hotkeyRow);
     connect(m_hotkeyButton, &QPushButton::clicked, this, [this] {
@@ -368,7 +365,7 @@ QWidget *SettingsPage::buildWindowCard()
     dockLayout->addWidget(m_dockRight);
 
     auto *dockRow = new SettingRow(QStringLiteral("贴靠位置"),
-                                   QStringLiteral("吸附到屏幕左侧或右侧"),
+                                   QString(),
                                    dockControl, card);
     body->addWidget(dockRow);
     connect(m_dockNone, &QPushButton::clicked, this, [this] { emit dockRequested(0); });
@@ -382,7 +379,7 @@ QWidget *SettingsPage::buildWindowCard()
     m_collapseAction->setFont(Theme::uiFont(11, QFont::DemiBold));
     m_collapseAction->setToolTip(QStringLiteral("收成屏幕边缘的一条窄标签"));
     auto *collapseRow = new SettingRow(QStringLiteral("收起便签"),
-                                       QStringLiteral("贴边后仅保留一条窄标签"),
+                                       QString(),
                                        m_collapseAction, card);
     body->addWidget(collapseRow);
     connect(m_collapseAction, &QAbstractButton::clicked, this, &SettingsPage::collapseRequested);
@@ -405,12 +402,6 @@ QWidget *SettingsPage::buildDataCard()
     auto *card = new SettingsCard;
     auto *body = card->body();
 
-    auto *privacyRow = new SettingRow(QStringLiteral("本地存储"),
-                                      QStringLiteral("数据只保存在这台电脑上，不会上传"),
-                                      nullptr, card);
-    body->addWidget(privacyRow);
-    body->addWidget(new Separator(card));
-
     auto *openAction = new TextAction(QStringLiteral("打开"), card);
     openAction->setColors(Theme::AccentDark, Theme::Accent);
     openAction->setFont(Theme::uiFont(11, QFont::DemiBold));
@@ -423,13 +414,6 @@ QWidget *SettingsPage::buildDataCard()
     m_pathLabel->setTextFormat(Qt::PlainText);
     body->addWidget(pathRow);
     connect(openAction, &QAbstractButton::clicked, this, &SettingsPage::openDataFolderRequested);
-
-    body->addWidget(new Separator(card));
-
-    auto *storageRow = new SettingRow(QStringLiteral("保存方式"),
-                                      QStringLiteral("JSON 文件 · 原子写入 · 自动备份"),
-                                      nullptr, card);
-    body->addWidget(storageRow);
 
     body->addWidget(new Separator(card));
 
@@ -459,14 +443,17 @@ QWidget *SettingsPage::buildDataCard()
     m_purgeExpiredAction->setFont(Theme::uiFont(11, QFont::DemiBold));
     m_purgeExpiredAction->setToolTip(QStringLiteral("删除超过保留天数的已完成事项"));
     auto *purgeExpiredRow = new SettingRow(QStringLiteral("清理超期"),
-                                           QStringLiteral("按上方天数删除超期完成项（不进归档）"),
+                                           QStringLiteral("删除超期完成项，不进归档"),
                                            m_purgeExpiredAction, card);
     body->addWidget(purgeExpiredRow);
     connect(m_purgeExpiredAction, &QAbstractButton::clicked, this, [this] {
+        if (!confirmIrreversible(this, QStringLiteral("清理超期完成项"),
+                                 QStringLiteral("将按保留天数删除超期完成项，且不进归档。此操作不可撤销。")))
+            return;
         const int days = m_store->settings().retentionDays;
         const int n = m_store->purgeCompletedOlderThan(days);
         emit messageRequested(n > 0
-                                  ? QStringLiteral("已清理 %1 条超期完成项").arg(n)
+                                  ? QStringLiteral("已清理")
                                   : QStringLiteral("没有需要清理的超期完成项"));
     });
 
@@ -477,13 +464,16 @@ QWidget *SettingsPage::buildDataCard()
     m_purgeAllAction->setFont(Theme::uiFont(11, QFont::DemiBold));
     m_purgeAllAction->setToolTip(QStringLiteral("删除主列表中全部已完成事项"));
     auto *purgeAllRow = new SettingRow(QStringLiteral("清理全部已完成"),
-                                       QStringLiteral("不论天数，清空全部已完成（不进归档）"),
+                                       QStringLiteral("清空全部已完成，不进归档"),
                                        m_purgeAllAction, card);
     body->addWidget(purgeAllRow);
     connect(m_purgeAllAction, &QAbstractButton::clicked, this, [this] {
+        if (!confirmIrreversible(this, QStringLiteral("清理全部已完成"),
+                                 QStringLiteral("将删除主列表中全部已完成事项，且不进归档。此操作不可撤销。")))
+            return;
         const int n = m_store->purgeAllCompleted();
         emit messageRequested(n > 0
-                                  ? QStringLiteral("已清理 %1 条已完成事项").arg(n)
+                                  ? QStringLiteral("已清理")
                                   : QStringLiteral("没有已完成事项可清理"));
     });
 
@@ -494,14 +484,17 @@ QWidget *SettingsPage::buildDataCard()
     m_archiveExpiredAction->setFont(Theme::uiFont(11, QFont::DemiBold));
     m_archiveExpiredAction->setToolTip(QStringLiteral("写入 todos-archive.json 后从主列表移除超期完成项"));
     auto *archiveRow = new SettingRow(QStringLiteral("归档超期"),
-                                      QStringLiteral("写入数据目录 todos-archive.json，再移出主列表"),
+                                      QStringLiteral("移出主列表并写入归档"),
                                       m_archiveExpiredAction, card);
     body->addWidget(archiveRow);
     connect(m_archiveExpiredAction, &QAbstractButton::clicked, this, [this] {
+        if (!confirmIrreversible(this, QStringLiteral("归档超期完成项"),
+                                 QStringLiteral("将超期完成项写入归档并从主列表移除。此操作不可撤销。")))
+            return;
         const int days = m_store->settings().retentionDays;
         const int n = m_store->archiveCompletedOlderThan(days);
         emit messageRequested(n > 0
-                                  ? QStringLiteral("已归档 %1 条超期完成项").arg(n)
+                                  ? QStringLiteral("已归档")
                                   : QStringLiteral("没有需要归档的超期完成项"));
     });
 
@@ -512,13 +505,13 @@ QWidget *SettingsPage::buildDataCard()
     m_importAllArchivedAction->setFont(Theme::uiFont(11, QFont::DemiBold));
     m_importAllArchivedAction->setToolTip(QStringLiteral("将 todos-archive.json 中全部条目移回主列表"));
     auto *importAllRow = new SettingRow(QStringLiteral("从归档导入"),
-                                        QStringLiteral("恢复到主列表；冲突 id 会换新 UUID，不覆盖现有项"),
+                                        QStringLiteral("恢复到主列表，不覆盖现有项"),
                                         m_importAllArchivedAction, card);
     body->addWidget(importAllRow);
     connect(m_importAllArchivedAction, &QAbstractButton::clicked, this, [this] {
         const int n = m_store->importAllArchived();
         emit messageRequested(n > 0
-                                  ? QStringLiteral("已从归档导入 %1 条").arg(n)
+                                  ? QStringLiteral("已导入")
                                   : QStringLiteral("归档为空，没有可导入项"));
     });
 
@@ -529,7 +522,7 @@ QWidget *SettingsPage::buildDataCard()
     m_importPickArchivedAction->setFont(Theme::uiFont(11, QFont::DemiBold));
     m_importPickArchivedAction->setToolTip(QStringLiteral("勾选归档条目后导入主列表"));
     auto *importPickRow = new SettingRow(QStringLiteral("按条导入"),
-                                         QStringLiteral("多选归档项再移回主列表"),
+                                         QString(),
                                          m_importPickArchivedAction, card);
     body->addWidget(importPickRow);
     connect(m_importPickArchivedAction, &QAbstractButton::clicked, this, [this] {
@@ -573,7 +566,7 @@ QWidget *SettingsPage::buildDataCard()
         }
         const int n = m_store->importArchived(picked);
         emit messageRequested(n > 0
-                                  ? QStringLiteral("已从归档导入 %1 条").arg(n)
+                                  ? QStringLiteral("已导入")
                                   : QStringLiteral("没有成功导入的条目"));
     });
     return card;
@@ -604,11 +597,6 @@ QWidget *SettingsPage::buildAboutCard()
     titleLine->addStretch(1);
     layout->addLayout(titleLine);
 
-    auto *desc = new QLabel(QStringLiteral("一张安静待在桌面上的待办便签。"), content);
-    desc->setFont(Theme::uiFont(10));
-    desc->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(Theme::Muted.name()));
-    layout->addWidget(desc);
-
     auto *shortcuts = new QLabel(QStringLiteral("快捷键  Ctrl+N 新建 · Ctrl+F 搜索 · Esc 关闭浮层 · 全局热键见设置"), content);
     shortcuts->setFont(Theme::uiFont(9));
     shortcuts->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(Theme::Faint.name()));
@@ -620,14 +608,6 @@ QWidget *SettingsPage::buildAboutCard()
     uninstall->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(Theme::Faint.name()));
     uninstall->setWordWrap(true);
     layout->addWidget(uninstall);
-
-    auto *launchHint = new QLabel(
-        QStringLiteral("推荐用 Start StickyTodo.cmd 启动；直接双击 exe 若目录为低完整性则无托盘。"),
-        content);
-    launchHint->setFont(Theme::uiFont(9));
-    launchHint->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(Theme::Faint.name()));
-    launchHint->setWordWrap(true);
-    layout->addWidget(launchHint);
 
     body->addWidget(content);
     return card;
