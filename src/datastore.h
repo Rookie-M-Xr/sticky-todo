@@ -8,6 +8,7 @@
 #include <QStringList>
 #include <QTimer>
 #include <QVector>
+#include <functional>
 
 struct AppSettings {
     bool alwaysOnTop = true;
@@ -16,6 +17,7 @@ struct AppSettings {
     int dockSide = 0; // 0 none, 1 left, 2 right
     bool collapsed = false;
     bool pinned = false;
+    int retentionDays = 30; // completed items older than N days are auto-purged on load
     QRect windowRect;
     QString screenName;
     QString draft;
@@ -38,6 +40,7 @@ public:
     QString dataDir() const { return m_dataDir; }
     QString todosPath() const;
     QString settingsPath() const;
+    QString archivePath() const;
     QStringList takeNotices();
 
     const TodoItem *findTodo(const QString &id) const;
@@ -49,6 +52,15 @@ public:
     bool setCompleted(const QString &id, bool completed, QDateTime *completedAt);
     bool removeTodo(const QString &id, TodoItem *removed = nullptr, int *removedIndex = nullptr);
     bool restoreTodo(const TodoItem &item, int index = -1);
+
+    void setRetentionDays(int days);
+    // Remove completed todos whose completedAt is strictly older than N days. Returns count removed.
+    // Auto-purge on load uses settings.retentionDays (see applyRetentionOnLoad).
+    int purgeCompletedOlderThan(int days);
+    int purgeAllCompleted();
+    // Append matching completed items to todos-archive.json, then remove from live store. Returns count.
+    int archiveCompletedOlderThan(int days);
+    int archiveAllCompleted();
 
     void setDraft(const QString &draft);
     void setDraftDue(QDate date);
@@ -86,6 +98,10 @@ private:
     QString resolveDataDir() const;
     void touchSettings();
     bool validateWindowRect(const QRect &rect) const;
+    void applyRetentionOnLoad();
+    int removeCompletedMatching(const std::function<bool(const TodoItem &)> &pred);
+    int archiveThenRemoveMatching(const std::function<bool(const TodoItem &)> &pred);
+    static bool isCompletedOlderThan(const TodoItem &item, int days, const QDateTime &now);
 
     QVector<TodoItem> m_todos;
     AppSettings m_settings;

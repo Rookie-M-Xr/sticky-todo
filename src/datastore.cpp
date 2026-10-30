@@ -11,8 +11,10 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QSaveFile>
+#include <QSet>
 #include <QUuid>
 #include <utility>
+#include <functional>
 
 namespace {
 
@@ -68,6 +70,11 @@ QString DataStore::settingsPath() const
     return QDir(m_dataDir).filePath(QStringLiteral("settings.json"));
 }
 
+QString DataStore::archivePath() const
+{
+    return QDir(m_dataDir).filePath(QStringLiteral("todos-archive.json"));
+}
+
 bool DataStore::load()
 {
     m_dataDir = resolveDataDir();
@@ -82,6 +89,8 @@ bool DataStore::load()
     m_loaded = true;
     loadTodos();
     loadSettings();
+    // R0: auto-purge completed items older than retentionDays once per load.
+    applyRetentionOnLoad();
     return true;
 }
 
@@ -232,6 +241,147 @@ bool DataStore::restoreTodo(const TodoItem &item, int index)
     scheduleTodosSave(0);
     emit todosChanged();
     return true;
+}
+
+void DataStore::setRetentionDays(int days)
+{
+    const int next = qBound(1, days, 3650);
+    if (m_settings.retentionDays == next)
+        return;
+    m_settings.retentionDays = next;
+    scheduleSettingsSave(0);
+    emit settingsChanged();
+}
+
+bool DataStore::isCompletedOlderThan(const TodoItem &item, int days, const QDateTime &now)
+{
+    if (!item.completed || days < 0)
+        return false;
+    QDateTime stamp = item.completedAt;
+    if (!stamp.isValid())
+        stamp = item.updatedAt;
+    if (!stamp.isValid())
+        return false;
+    return stamp.addDays(days) <= now;
+}
+
+int DataStore::removeCompletedMatching(const std::function<bool(const TodoItem &)> &pred)
+{
+    int removed = 0;
+    for (int i = m_todos.size() - 1; i >= 0; --i) {
+        const TodoItem &item = m_todos.at(i);
+        if (!item.completed)
+            continue;
+        if (!pred(item))
+            continue;
+        m_todos.removeAt(i);
+        ++removed;
+    }
+    if (removed > 0) {
+        scheduleTodosSave(0);
+        emit todosChanged();
+    }
+    return removed;
+}
+
+int DataStore::purgeCompletedOlderThan(int days)
+{
+    if (days < 0)
+        return 0;
+    const QDateTime now = QDateTime::currentDateTime();
+    return removeCompletedMatching([&](const TodoItem &item) {
+        return isCompletedOlderThan(item, days, now);
+    });
+}
+
+int DataStore::purgeAllCompleted()
+{
+    return removeCompletedMatching([](const TodoItem &) { return true; });
+}
+
+int DataStore::archiveThenRemoveMatching(const std::function<bool(const TodoItem &)> &pred)
+{
+    QVector<TodoItem> matched;
+    matched.reserve(m_todos.size());
+    for (const TodoItem &item : std::as_const(m_todos)) {
+        if (item.completed && pred(item))
+            matched.append(item);
+    }
+    if (matched.isEmpty())
+        return 0;
+
+    QJsonArray archived;
+    const QString path = archivePath();
+    if (QFileInfo::exists(path)) {
+        QFile file(path);
+        if (file.open(QIODevice::ReadOnly)) {
+            QJsonParseError parseError;
+            const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+            if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
+                const QJsonValue arr = doc.object().value(QStringLiteral("archived"));
+                if (arr.isArray())
+                    archived = arr.toArray();
+            }
+        }
+    }
+
+    const QString stamped = QDateTime::currentDateTime().toString(Qt::ISODateWithMs);
+    for (const TodoItem &item : std::as_const(matched)) {
+        QJsonObject entry;
+        entry.insert(QStringLiteral("archivedAt"), stamped);
+        entry.insert(QStringLiteral("item"), item.toJson());
+        archived.append(entry);
+    }
+
+    QJsonObject root;
+    root.insert(QStringLiteral("schemaVersion"), kSchemaVersion);
+    root.insert(QStringLiteral("archived"), archived);
+    QString error;
+    if (!writeJson(path, root, &error)) {
+        const QString message = QStringLiteral("归档写入失败：%1").arg(error);
+        addNotice(message);
+        emit errorOccurred(message);
+        return 0;
+    }
+
+    const QSet<QString> ids = [&] {
+        QSet<QString> s;
+        for (const TodoItem &item : std::as_const(matched))
+            s.insert(item.id);
+        return s;
+    }();
+    for (int i = m_todos.size() - 1; i >= 0; --i) {
+        if (ids.contains(m_todos.at(i).id))
+            m_todos.removeAt(i);
+    }
+    scheduleTodosSave(0);
+    emit todosChanged();
+    return matched.size();
+}
+
+int DataStore::archiveCompletedOlderThan(int days)
+{
+    if (days < 0)
+        return 0;
+    const QDateTime now = QDateTime::currentDateTime();
+    return archiveThenRemoveMatching([&](const TodoItem &item) {
+        return isCompletedOlderThan(item, days, now);
+    });
+}
+
+int DataStore::archiveAllCompleted()
+{
+    return archiveThenRemoveMatching([](const TodoItem &) { return true; });
+}
+
+void DataStore::applyRetentionOnLoad()
+{
+    const int days = m_settings.retentionDays;
+    if (days < 1)
+        return;
+    const int removed = purgeCompletedOlderThan(days);
+    if (removed > 0)
+        addNotice(QStringLiteral("已按保留策略清理 %1 条超期完成项（>%2 天）").arg(removed).arg(days));
 }
 
 void DataStore::setDraft(const QString &draft)
@@ -399,6 +549,7 @@ void DataStore::saveSettingsNow()
     root.insert(QStringLiteral("dockSide"), m_settings.dockSide);
     root.insert(QStringLiteral("collapsed"), m_settings.collapsed);
     root.insert(QStringLiteral("pinned"), m_settings.pinned);
+    root.insert(QStringLiteral("retentionDays"), m_settings.retentionDays);
     root.insert(QStringLiteral("draft"), m_settings.draft);
     root.insert(QStringLiteral("draftDue"),
                 m_settings.draftDue.isValid() ? m_settings.draftDue.toString(Qt::ISODate) : QString());
@@ -589,6 +740,7 @@ void DataStore::loadSettings()
         settings->dockSide = qBound(0, settings->dockSide, 2);
         settings->collapsed = root.value(QStringLiteral("collapsed")).toBool(false);
         settings->pinned = root.value(QStringLiteral("pinned")).toBool(false);
+        settings->retentionDays = qBound(1, root.value(QStringLiteral("retentionDays")).toInt(30), 3650);
         settings->draft = root.value(QStringLiteral("draft")).toString().left(1000);
         const QString dueText = root.value(QStringLiteral("draftDue")).toString();
         settings->draftDue = QDate::fromString(dueText, Qt::ISODate);
@@ -714,6 +866,7 @@ bool DataStore::reloadSettingsBackup(QString *warning)
     fallback.dockSide = qBound(0, root.value(QStringLiteral("dockSide")).toInt(0), 2);
     fallback.collapsed = root.value(QStringLiteral("collapsed")).toBool(false);
     fallback.pinned = root.value(QStringLiteral("pinned")).toBool(false);
+    fallback.retentionDays = qBound(1, root.value(QStringLiteral("retentionDays")).toInt(30), 3650);
     fallback.draft = root.value(QStringLiteral("draft")).toString().left(1000);
     fallback.draftDue = QDate::fromString(root.value(QStringLiteral("draftDue")).toString(), Qt::ISODate);
     if (!fallback.draftDue.isValid())

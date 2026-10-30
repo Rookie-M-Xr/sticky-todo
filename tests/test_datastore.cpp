@@ -2,8 +2,12 @@
 
 #include <QCoreApplication>
 #include <QDate>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QUuid>
 
 #include <cstdio>
@@ -179,6 +183,144 @@ void testImmediatePersistAndIsolation()
         pass("immediate persist + data-dir isolation");
 }
 
+
+TodoItem makeCompleted(const QString &text, int daysAgo)
+{
+    TodoItem item;
+    item.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    item.text = text;
+    const QDateTime stamp = QDateTime::currentDateTime().addDays(-daysAgo);
+    item.createdAt = stamp;
+    item.updatedAt = stamp;
+    item.completed = true;
+    item.completedAt = stamp;
+    return item;
+}
+
+void testRetentionPurge()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "retention: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    QString oldId;
+    QString recentId;
+    QString openId;
+    {
+        DataStore store;
+        expect(store.load(), "retention: load");
+        expect(store.settings().retentionDays == 30, "retention: default N=30");
+
+        const TodoItem oldItem = makeCompleted(QStringLiteral("old-done"), 45);
+        const TodoItem recentItem = makeCompleted(QStringLiteral("recent-done"), 5);
+        TodoItem openItem;
+        openItem.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        openItem.text = QStringLiteral("still-open");
+        openItem.createdAt = QDateTime::currentDateTime();
+        openItem.updatedAt = openItem.createdAt;
+        oldId = oldItem.id;
+        recentId = recentItem.id;
+        openId = openItem.id;
+        expect(store.restoreTodo(oldItem), "retention: restore old");
+        expect(store.restoreTodo(recentItem), "retention: restore recent");
+        expect(store.restoreTodo(openItem), "retention: restore open");
+        expect(store.todos().size() == 3, "retention: three seeded");
+
+        const int purged = store.purgeCompletedOlderThan(30);
+        expect(purged == 1, "retention: purge removes one");
+        expect(store.findTodo(oldId) == nullptr, "retention: old gone");
+        expect(store.findTodo(recentId) != nullptr, "retention: recent remains");
+        expect(store.findTodo(openId) != nullptr, "retention: open remains");
+        expect(store.flush(), "retention: flush after purge");
+    }
+
+    // Auto-purge on load: seed another old item, reload with N=30
+    {
+        DataStore store;
+        expect(store.load(), "retention-auto: load");
+        const TodoItem older = makeCompleted(QStringLiteral("auto-old"), 60);
+        const TodoItem fresh = makeCompleted(QStringLiteral("auto-fresh"), 2);
+        expect(store.restoreTodo(older), "retention-auto: restore older");
+        expect(store.restoreTodo(fresh), "retention-auto: restore fresh");
+        store.setRetentionDays(30);
+        expect(store.settings().retentionDays == 30, "retention-auto: N stored");
+        expect(store.flush(), "retention-auto: flush seed");
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "retention-auto: reload applies purge");
+        bool sawFresh = false;
+        bool sawOlder = false;
+        for (const TodoItem &item : store.todos()) {
+            if (item.text == QStringLiteral("auto-old"))
+                sawOlder = true;
+            if (item.text == QStringLiteral("auto-fresh"))
+                sawFresh = true;
+        }
+        expect(!sawOlder, "retention-auto: older purged on load");
+        expect(sawFresh, "retention-auto: fresh kept on load");
+        expect(store.findTodo(recentId) != nullptr, "retention-auto: prior recent still there");
+        expect(store.findTodo(openId) != nullptr, "retention-auto: open still there");
+    }
+
+    if (g_failed == before)
+        pass("retention purge + auto on load");
+}
+
+void testArchiveExpired()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "archive: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    QString oldId;
+    QString recentId;
+    {
+        DataStore store;
+        expect(store.load(), "archive: load");
+        const TodoItem oldItem = makeCompleted(QStringLiteral("arch-old"), 40);
+        const TodoItem recentItem = makeCompleted(QStringLiteral("arch-recent"), 3);
+        oldId = oldItem.id;
+        recentId = recentItem.id;
+        expect(store.restoreTodo(oldItem), "archive: restore old");
+        expect(store.restoreTodo(recentItem), "archive: restore recent");
+        const int n = store.archiveCompletedOlderThan(30);
+        expect(n == 1, "archive: one archived");
+        expect(store.findTodo(oldId) == nullptr, "archive: old removed from live");
+        expect(store.findTodo(recentId) != nullptr, "archive: recent stays");
+        expect(QFile::exists(store.archivePath()), "archive: file exists");
+        expect(store.flush(), "archive: flush");
+
+        QFile file(store.archivePath());
+        expect(file.open(QIODevice::ReadOnly), "archive: open file");
+        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        expect(doc.isObject(), "archive: root object");
+        const QJsonArray arr = doc.object().value(QStringLiteral("archived")).toArray();
+        expect(arr.size() == 1, "archive: one entry");
+        const QJsonObject entry = arr.at(0).toObject();
+        expect(!entry.value(QStringLiteral("archivedAt")).toString().isEmpty(), "archive: archivedAt set");
+        expect(entry.value(QStringLiteral("item")).toObject().value(QStringLiteral("id")).toString() == oldId,
+               "archive: item id matches");
+    }
+
+    // purgeAllCompleted
+    {
+        DataStore store;
+        expect(store.load(), "purge-all: load");
+        expect(store.purgeAllCompleted() >= 1, "purge-all: removes remaining completed");
+        for (const TodoItem &item : store.todos())
+            expect(!item.completed, "purge-all: no completed left");
+    }
+
+    if (g_failed == before)
+        pass("archive expired + purge all");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -189,6 +331,8 @@ int main(int argc, char *argv[])
     testRoundTrip();
     testCorruptionRecovery();
     testImmediatePersistAndIsolation();
+    testRetentionPurge();
+    testArchiveExpired();
 
     if (g_failed != 0) {
         std::fprintf(stderr, "%d assertion(s) failed\n", g_failed);

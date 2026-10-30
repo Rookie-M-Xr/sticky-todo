@@ -6,6 +6,7 @@ class DataStore;
 class QLabel;
 class QPushButton;
 class QScrollArea;
+class QSpinBox;
 class QVBoxLayout;
 class SwitchButton;
 class TextAction;
@@ -24,6 +25,7 @@ signals:
     void collapseRequested();
     void resetWindowRequested();
     void openDataFolderRequested();
+    void messageRequested(const QString &text);
 
 private:
     void buildUi();
@@ -44,5 +46,9 @@ private:
     QPushButton *m_dockRight = nullptr;
     QLabel *m_pathLabel = nullptr;
     TextAction *m_collapseAction = nullptr;
+    QSpinBox *m_retentionSpin = nullptr;
+    TextAction *m_purgeExpiredAction = nullptr;
+    TextAction *m_purgeAllAction = nullptr;
+    TextAction *m_archiveExpiredAction = nullptr;
     bool m_syncing = false;
 };

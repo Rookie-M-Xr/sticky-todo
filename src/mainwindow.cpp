@@ -340,6 +340,9 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_settingsPage, &SettingsPage::openDataFolderRequested, this, [this] {
         QDesktopServices::openUrl(QUrl::fromLocalFile(m_store->dataDir()));
     });
+    connect(m_settingsPage, &SettingsPage::messageRequested, this, [this](const QString &text) {
+        showToast(text);
+    });
 
     connect(qApp, &QGuiApplication::applicationStateChanged, this,
             [this](Qt::ApplicationState state) {

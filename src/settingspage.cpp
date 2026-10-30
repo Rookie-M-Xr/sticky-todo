@@ -14,6 +14,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QSpinBox>
 #include <QVBoxLayout>
 
 namespace {
@@ -340,6 +341,80 @@ QWidget *SettingsPage::buildDataCard()
                                       QStringLiteral("JSON 文件 · 原子写入 · 自动备份"),
                                       nullptr, card);
     body->addWidget(storageRow);
+
+    body->addWidget(new Separator(card));
+
+    m_retentionSpin = new QSpinBox(card);
+    m_retentionSpin->setRange(1, 3650);
+    m_retentionSpin->setSuffix(QStringLiteral(" 天"));
+    m_retentionSpin->setFixedWidth(92);
+    m_retentionSpin->setFocusPolicy(Qt::ClickFocus);
+    m_retentionSpin->setToolTip(QStringLiteral("完成超过该天数的事项会在启动时自动清理"));
+    m_retentionSpin->setStyleSheet(QStringLiteral(
+        "QSpinBox { border: 1px solid rgba(169,154,120,0.58); border-radius: 8px; "
+        "background: rgba(255,255,255,0.35); color: #4f4a3d; padding: 2px 6px; min-height: 24px; }"
+        "QSpinBox::up-button, QSpinBox::down-button { width: 16px; }"));
+    auto *retentionRow = new SettingRow(QStringLiteral("完成项保留"),
+                                        QStringLiteral("超期完成项启动时自动清理；也可手动清理/归档"),
+                                        m_retentionSpin, card);
+    body->addWidget(retentionRow);
+    connect(m_retentionSpin, qOverload<int>(&QSpinBox::valueChanged), this, [this](int value) {
+        if (!m_syncing)
+            m_store->setRetentionDays(value);
+    });
+
+    body->addWidget(new Separator(card));
+
+    m_purgeExpiredAction = new TextAction(QStringLiteral("清超期"), card);
+    m_purgeExpiredAction->setColors(Theme::AccentDark, Theme::Accent);
+    m_purgeExpiredAction->setFont(Theme::uiFont(11, QFont::DemiBold));
+    m_purgeExpiredAction->setToolTip(QStringLiteral("删除超过保留天数的已完成事项"));
+    auto *purgeExpiredRow = new SettingRow(QStringLiteral("清理超期"),
+                                           QStringLiteral("按上方天数删除超期完成项（不进归档）"),
+                                           m_purgeExpiredAction, card);
+    body->addWidget(purgeExpiredRow);
+    connect(m_purgeExpiredAction, &QAbstractButton::clicked, this, [this] {
+        const int days = m_store->settings().retentionDays;
+        const int n = m_store->purgeCompletedOlderThan(days);
+        emit messageRequested(n > 0
+                                  ? QStringLiteral("已清理 %1 条超期完成项").arg(n)
+                                  : QStringLiteral("没有需要清理的超期完成项"));
+    });
+
+    body->addWidget(new Separator(card));
+
+    m_purgeAllAction = new TextAction(QStringLiteral("清全部"), card);
+    m_purgeAllAction->setColors(Theme::InkSoft, Theme::Ink);
+    m_purgeAllAction->setFont(Theme::uiFont(11, QFont::DemiBold));
+    m_purgeAllAction->setToolTip(QStringLiteral("删除主列表中全部已完成事项"));
+    auto *purgeAllRow = new SettingRow(QStringLiteral("清理全部已完成"),
+                                       QStringLiteral("不论天数，清空全部已完成（不进归档）"),
+                                       m_purgeAllAction, card);
+    body->addWidget(purgeAllRow);
+    connect(m_purgeAllAction, &QAbstractButton::clicked, this, [this] {
+        const int n = m_store->purgeAllCompleted();
+        emit messageRequested(n > 0
+                                  ? QStringLiteral("已清理 %1 条已完成事项").arg(n)
+                                  : QStringLiteral("没有已完成事项可清理"));
+    });
+
+    body->addWidget(new Separator(card));
+
+    m_archiveExpiredAction = new TextAction(QStringLiteral("归档"), card);
+    m_archiveExpiredAction->setColors(Theme::AccentDark, Theme::Accent);
+    m_archiveExpiredAction->setFont(Theme::uiFont(11, QFont::DemiBold));
+    m_archiveExpiredAction->setToolTip(QStringLiteral("写入 todos-archive.json 后从主列表移除超期完成项"));
+    auto *archiveRow = new SettingRow(QStringLiteral("归档超期"),
+                                      QStringLiteral("写入数据目录 todos-archive.json，再移出主列表"),
+                                      m_archiveExpiredAction, card);
+    body->addWidget(archiveRow);
+    connect(m_archiveExpiredAction, &QAbstractButton::clicked, this, [this] {
+        const int days = m_store->settings().retentionDays;
+        const int n = m_store->archiveCompletedOlderThan(days);
+        emit messageRequested(n > 0
+                                  ? QStringLiteral("已归档 %1 条超期完成项").arg(n)
+                                  : QStringLiteral("没有需要归档的超期完成项"));
+    });
     return card;
 }
 
@@ -401,6 +476,8 @@ void SettingsPage::refresh()
     m_dockNone->setChecked(settings.dockSide == 0);
     m_dockLeft->setChecked(settings.dockSide == 1);
     m_dockRight->setChecked(settings.dockSide == 2);
+    if (m_retentionSpin)
+        m_retentionSpin->setValue(settings.retentionDays);
 
     const QString nativePath = QDir::toNativeSeparators(m_store->dataDir());
     const QFontMetrics metrics(m_pathLabel->font());
