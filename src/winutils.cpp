@@ -10,6 +10,7 @@
 #include <QByteArray>
 #include <QCoreApplication>
 #include <QDir>
+#include <QStringList>
 #include <QFileInfo>
 #include <QFile>
 #include <QSaveFile>
@@ -286,6 +287,60 @@ QString moduleDirectory()
     if (n == 0 || n >= MAX_PATH)
         return {};
     return QFileInfo(QString::fromWCharArray(path)).absolutePath();
+}
+
+bool probeWritableFile(const QString &candidatePath)
+{
+    // Low IL cannot write medium %TEMP%; probe with a real write rather than
+    // trusting QDir::temp() / GetTempPath().
+    QSaveFile probe(candidatePath);
+    if (!probe.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return false;
+    const QByteArray marker = QByteArrayLiteral("sticky-todo-handoff-probe");
+    if (probe.write(marker) != marker.size())
+        return false;
+    if (!probe.commit())
+        return false;
+    QFile::remove(candidatePath);
+    return true;
+}
+
+QString chooseWritableHandoffScriptPath(const QString &exeDir, const QString &localApp)
+{
+    QStringList candidates;
+    if (!exeDir.isEmpty())
+        candidates << QDir(exeDir).filePath(QStringLiteral("StickyTodo-handoff.cmd"));
+    if (!localApp.isEmpty()) {
+        const QString lowTemp = QDir(localApp).filePath(QStringLiteral("Temp"));
+        QDir().mkpath(lowTemp);
+        candidates << QDir(lowTemp).filePath(QStringLiteral("StickyTodo-handoff.cmd"));
+    }
+    wchar_t tempBuf[MAX_PATH];
+    const DWORD n = GetTempPathW(MAX_PATH, tempBuf);
+    if (n > 0 && n < MAX_PATH) {
+        const QString sysTemp = QString::fromWCharArray(tempBuf);
+        candidates << QDir(sysTemp).filePath(QStringLiteral("StickyTodo-handoff.cmd"));
+    }
+
+    QStringList seen;
+    for (const QString &raw : candidates) {
+        const QString path = QDir::cleanPath(raw);
+        if (path.isEmpty())
+            continue;
+        bool dup = false;
+        for (const QString &s : seen) {
+            if (s.compare(path, Qt::CaseInsensitive) == 0) {
+                dup = true;
+                break;
+            }
+        }
+        if (dup)
+            continue;
+        seen << path;
+        if (probeWritableFile(path))
+            return path;
+    }
+    return {};
 }
 
 bool writeHandoffScript(const QString &scriptPath, const QString &srcDir, const QString &dataDir)
@@ -603,7 +658,11 @@ bool handoffIfLowIntegrity()
     if (dataDir.isEmpty())
         dataDir = QDir(exeDir).filePath(QStringLiteral("config"));
 
-    const QString scriptPath = QDir::temp().filePath(QStringLiteral("StickyTodo-handoff.cmd"));
+    // Prefer exe-sibling, then %LOCALAPPDATA%\Temp, then GetTempPath — Low
+    // cannot write medium TEMP, so each candidate is probed with a real write.
+    const QString scriptPath = chooseWritableHandoffScriptPath(exeDir, localApp);
+    if (scriptPath.isEmpty())
+        return false;
     if (!writeHandoffScript(scriptPath, exeDir, dataDir))
         return false;
 
