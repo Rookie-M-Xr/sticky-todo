@@ -124,7 +124,7 @@ bool DataStore::load()
         if (fallback.isEmpty() || !WinUtils::ensureDirectoryWritable(fallback)) {
             m_dataDir = portable;
             const QString message = QStringLiteral(
-                "便携 config 不可写（%1），且无法回退到用户目录。请换到有写权限的位置解压。")
+                "数据目录不可写（%1），且无法回退到用户目录。请换到有写权限的位置解压。")
                                         .arg(QDir::toNativeSeparators(portable));
             addNotice(message);
             emit errorOccurred(message);
@@ -134,7 +134,7 @@ bool DataStore::load()
         m_dataDir = fallback;
         // Keep subsequent saves / autostart on the writable path for this process.
         qputenv("STICKY_TODO_DATA_DIR", QDir::toNativeSeparators(fallback).toUtf8());
-        QString message = QStringLiteral("便携 config 不可写（%1），已改用 %2")
+        QString message = QStringLiteral("数据目录不可写（%1）\n已改用：%2")
                               .arg(QDir::toNativeSeparators(portable),
                                    QDir::toNativeSeparators(fallback));
         if (migrated > 0)
