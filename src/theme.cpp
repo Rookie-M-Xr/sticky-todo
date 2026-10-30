@@ -1,8 +1,11 @@
 #include "theme.h"
+#include "winutils.h"
 
 #include <QApplication>
 #include <QEvent>
 #include <QFontDatabase>
+#include <QPainterPath>
+#include <QRegion>
 #include <QStringList>
 #include <QStyleHints>
 #include <QToolTip>
@@ -21,6 +24,8 @@ QString firstAvailable(const QStringList &candidates)
     }
     return QStringLiteral("Segoe UI");
 }
+
+constexpr int kMenuRadius = 12;
 
 } // namespace
 
@@ -158,7 +163,7 @@ QMenu, QMenu#trayMenu {
     background: #fffdf4;
     color: #4a4538;
     border: 1px solid #e3d6b4;
-    border-radius: 12px;
+    border-radius: %1px;
     padding: 6px;
 }
 QMenu::item {
@@ -182,7 +187,7 @@ QMenu::separator {
 QMenu::icon {
     padding-left: 6px;
 }
-)");
+)").arg(kMenuRadius);
 }
 
 } // namespace Theme
@@ -203,6 +208,36 @@ void polishPopupWidget(QWidget *widget)
     widget->setAttribute(Qt::WA_StyledBackground, true);
 }
 
+void applyMenuRoundedMask(QWidget *menu)
+{
+    const QRect rect = menu->rect();
+    if (rect.width() < 2 || rect.height() < 2)
+        return;
+    QPainterPath path;
+    path.addRoundedRect(QRectF(rect), kMenuRadius, kMenuRadius);
+    menu->setMask(QRegion(path.toFillPolygon().toPolygon()));
+}
+
+void polishMenuWindow(QWidget *menu)
+{
+    polishPopupWidget(menu);
+    menu->setAutoFillBackground(false);
+    menu->setAttribute(Qt::WA_TranslucentBackground, true);
+    menu->setAttribute(Qt::WA_NoSystemBackground, true);
+    menu->setAttribute(Qt::WA_StyledBackground, true);
+    // Flags before the native HWND exists. setWindowFlags during Show can hide
+    // the popup. Tray already has these; context menus do not.
+    const Qt::WindowFlags hints = Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint;
+    if ((menu->windowFlags() & hints) != hints)
+        menu->setWindowFlags((menu->windowFlags() | Qt::Popup | hints));
+}
+
+void polishMenuShape(QWidget *menu)
+{
+    applyMenuRoundedMask(menu);
+    WinUtils::prepareRoundedPopup(menu);
+}
+
 class PopupChromeFilter final : public QObject
 {
 public:
@@ -214,13 +249,20 @@ public:
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override
     {
-        if (event->type() != QEvent::Polish && event->type() != QEvent::Show)
-            return false;
         auto *widget = qobject_cast<QWidget *>(watched);
         if (!widget)
             return false;
-        if (widget->inherits("QMenu") || widget->inherits("QTipLabel")
-            || widget->inherits("QMessageBox"))
+        const QEvent::Type type = event->type();
+        if (widget->inherits("QMenu")) {
+            if (type == QEvent::Polish)
+                polishMenuWindow(widget);
+            if (type == QEvent::Polish || type == QEvent::Show || type == QEvent::Resize)
+                polishMenuShape(widget);
+            return false;
+        }
+        if (type != QEvent::Polish && type != QEvent::Show)
+            return false;
+        if (widget->inherits("QTipLabel") || widget->inherits("QMessageBox"))
             polishPopupWidget(widget);
         return false;
     }
