@@ -1,0 +1,33 @@
+# Build intermediates
+/build/
+*.o
+moc_*.cpp
+qrc_*.cpp
+
+# Local deploy / runtime binaries (keep dist scripts & docs)
+/dist/*.exe
+/dist/*.dll
+/dist/platforms/
+/dist/config/
+
+# Packaged release trees and archives
+/StickyTodo-1.0-win64/
+/StickyTodo-1.0-win64*/
+*.zip
+
+# Portable / test data (scratch)
+/testdata/
+**/config/todos.json
+**/config/settings.json
+**/config/*.bak
+**/config/*.corrupt-*
+
+# Editor / OS junk
+.vs/
+.vscode/
+*.user
+*.suo
+Thumbs.db
+Desktop.ini
+*.tmp
+*.log

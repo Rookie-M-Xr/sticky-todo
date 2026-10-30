@@ -1,0 +1,14 @@
+Sticky Todo 是未签名的个人桌面小工具，Windows 10/11 的 Microsoft Defender SmartScreen 可能显示“Windows 已保护你的电脑”，并标注“发布者未知”。
+
+这不是病毒提示，而是因为程序没有商业代码签名证书。推荐处理顺序：
+
+1. 先把 ZIP 解压到有写权限的目录（不要直接双击 ZIP 里的 exe）。
+2. 解压前右键 ZIP → 属性 → 勾选“解除锁定” → 应用，然后再解压。
+3. 如果已经解压：双击 unblock.cmd；或直接双击 Start StickyTodo.cmd。
+   也可以在目录中打开 PowerShell 运行：
+   Get-ChildItem -Recurse -File | Unblock-File
+4. 以后请双击 Start StickyTodo.cmd 启动；它会先自动解除锁定，再启动程序。
+   如果直接双击 StickyTodo.exe 且仍出现 SmartScreen，点“更多信息”→“仍要运行”。
+
+彻底消除该提示需要购买代码签名证书并签名，个人绿色版无法保证每台机器都不提示。
+不要为了这个提示关闭系统 SmartScreen。
