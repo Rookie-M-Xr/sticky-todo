@@ -15,6 +15,10 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSpinBox>
+#include <QAbstractItemView>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QListWidget>
 #include <QVBoxLayout>
 
 namespace {
@@ -457,6 +461,78 @@ QWidget *SettingsPage::buildDataCard()
         emit messageRequested(n > 0
                                   ? QStringLiteral("已归档 %1 条超期完成项").arg(n)
                                   : QStringLiteral("没有需要归档的超期完成项"));
+    });
+
+    body->addWidget(new Separator(card));
+
+    m_importAllArchivedAction = new TextAction(QStringLiteral("全部导入"), card);
+    m_importAllArchivedAction->setColors(Theme::AccentDark, Theme::Accent);
+    m_importAllArchivedAction->setFont(Theme::uiFont(11, QFont::DemiBold));
+    m_importAllArchivedAction->setToolTip(QStringLiteral("将 todos-archive.json 中全部条目移回主列表"));
+    auto *importAllRow = new SettingRow(QStringLiteral("从归档导入"),
+                                        QStringLiteral("恢复到主列表；冲突 id 会换新 UUID，不覆盖现有项"),
+                                        m_importAllArchivedAction, card);
+    body->addWidget(importAllRow);
+    connect(m_importAllArchivedAction, &QAbstractButton::clicked, this, [this] {
+        const int n = m_store->importAllArchived();
+        emit messageRequested(n > 0
+                                  ? QStringLiteral("已从归档导入 %1 条").arg(n)
+                                  : QStringLiteral("归档为空，没有可导入项"));
+    });
+
+    body->addWidget(new Separator(card));
+
+    m_importPickArchivedAction = new TextAction(QStringLiteral("按条…"), card);
+    m_importPickArchivedAction->setColors(Theme::InkSoft, Theme::Ink);
+    m_importPickArchivedAction->setFont(Theme::uiFont(11, QFont::DemiBold));
+    m_importPickArchivedAction->setToolTip(QStringLiteral("勾选归档条目后导入主列表"));
+    auto *importPickRow = new SettingRow(QStringLiteral("按条导入"),
+                                         QStringLiteral("多选归档项再移回主列表"),
+                                         m_importPickArchivedAction, card);
+    body->addWidget(importPickRow);
+    connect(m_importPickArchivedAction, &QAbstractButton::clicked, this, [this] {
+        const QVector<ArchivedEntry> entries = m_store->listArchived();
+        if (entries.isEmpty()) {
+            emit messageRequested(QStringLiteral("归档为空，没有可导入项"));
+            return;
+        }
+        QDialog dialog(this);
+        dialog.setWindowTitle(QStringLiteral("从归档按条导入"));
+        dialog.setModal(true);
+        auto *layout = new QVBoxLayout(&dialog);
+        auto *list = new QListWidget(&dialog);
+        list->setSelectionMode(QAbstractItemView::NoSelection);
+        for (const ArchivedEntry &entry : entries) {
+            const QString stamp = entry.archivedAt.isEmpty()
+                                      ? QStringLiteral("?")
+                                      : entry.archivedAt.left(10);
+            auto *row = new QListWidgetItem(
+                QStringLiteral("[%1] %2").arg(stamp, entry.item.text.left(80)), list);
+            row->setFlags(row->flags() | Qt::ItemIsUserCheckable);
+            row->setCheckState(Qt::Unchecked);
+            row->setData(Qt::UserRole, entry.index);
+        }
+        layout->addWidget(list);
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+        layout->addWidget(buttons);
+        connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        if (dialog.exec() != QDialog::Accepted)
+            return;
+        QVector<int> picked;
+        for (int i = 0; i < list->count(); ++i) {
+            QListWidgetItem *row = list->item(i);
+            if (row && row->checkState() == Qt::Checked)
+                picked.append(row->data(Qt::UserRole).toInt());
+        }
+        if (picked.isEmpty()) {
+            emit messageRequested(QStringLiteral("未勾选任何归档项"));
+            return;
+        }
+        const int n = m_store->importArchived(picked);
+        emit messageRequested(n > 0
+                                  ? QStringLiteral("已从归档导入 %1 条").arg(n)
+                                  : QStringLiteral("没有成功导入的条目"));
     });
     return card;
 }

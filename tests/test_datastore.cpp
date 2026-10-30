@@ -449,6 +449,122 @@ void testWeeklyMonthlySnapshots()
         pass("weekly/monthly snapshots + visibility persist");
 }
 
+
+void testArchiveReimport()
+{
+    const int before = g_failed;
+
+    {
+        const QString dataDir = makeDataDir();
+        expect(!dataDir.isEmpty(), "reimport: data dir");
+        if (dataDir.isEmpty())
+            return;
+
+        QString archivedId;
+        QString archivedText;
+        QDate archivedDue;
+        QDateTime archivedCompletedAt;
+
+        DataStore store;
+        expect(store.load(), "reimport: load");
+        TodoItem item = makeCompleted(QStringLiteral("reimport-me"), 40);
+        item.dueDate = QDate::currentDate().addDays(-2);
+        archivedId = item.id;
+        archivedText = item.text;
+        archivedDue = item.dueDate;
+        archivedCompletedAt = item.completedAt;
+        expect(store.restoreTodo(item), "reimport: seed");
+        expect(store.archiveCompletedOlderThan(30) == 1, "reimport: archive one");
+        expect(store.findTodo(archivedId) == nullptr, "reimport: gone from main");
+        expect(store.listArchived().size() == 1, "reimport: one in archive");
+        expect(store.importAllArchived() == 1, "reimport: import all");
+        const TodoItem *back = store.findTodo(archivedId);
+        expect(back != nullptr, "reimport: back with same id");
+        if (back) {
+            expect(back->text == archivedText, "reimport: text intact");
+            expect(back->dueDate == archivedDue, "reimport: due intact");
+            expect(back->completed, "reimport: still completed");
+            expect(back->completedAt == archivedCompletedAt, "reimport: completedAt intact");
+        }
+        expect(store.listArchived().isEmpty(), "reimport: archive emptied");
+        expect(store.flush(), "reimport: flush");
+    }
+
+    // Conflict-id: live already has same id → mint new UUID, keep fields.
+    {
+        const QString dataDir = makeDataDir();
+        expect(!dataDir.isEmpty(), "conflict: data dir");
+        if (dataDir.isEmpty())
+            return;
+
+        DataStore store;
+        expect(store.load(), "conflict: load");
+        TodoItem live = makeCompleted(QStringLiteral("live-keep"), 3);
+        live.id = QStringLiteral("fixed-conflict-id");
+        TodoItem toArchive = makeCompleted(QStringLiteral("from-archive"), 50);
+        toArchive.id = QStringLiteral("fixed-conflict-id");
+        toArchive.dueDate = QDate::currentDate().addDays(-9);
+        expect(store.restoreTodo(toArchive), "conflict: seed archive candidate");
+        expect(store.archiveCompletedOlderThan(30) == 1, "conflict: archive candidate");
+        expect(store.findTodo(QStringLiteral("fixed-conflict-id")) == nullptr, "conflict: main empty of id");
+        expect(store.restoreTodo(live), "conflict: put live back");
+        expect(store.findTodo(QStringLiteral("fixed-conflict-id")) != nullptr, "conflict: live present");
+        expect(store.listArchived().size() == 1, "conflict: archive has one");
+        expect(store.importAllArchived() == 1, "conflict: import with conflict");
+        expect(store.findTodo(QStringLiteral("fixed-conflict-id")) != nullptr, "conflict: live id kept");
+        expect(store.todos().size() == 2, "conflict: two todos after import");
+        bool sawArchiveText = false;
+        bool sawNewId = false;
+        for (const TodoItem &item : store.todos()) {
+            if (item.text == QStringLiteral("from-archive")) {
+                sawArchiveText = true;
+                expect(item.id != QStringLiteral("fixed-conflict-id"), "conflict: restored got new id");
+                expect(item.dueDate == QDate::currentDate().addDays(-9), "conflict: due intact");
+                sawNewId = item.id != QStringLiteral("fixed-conflict-id");
+            }
+        }
+        expect(sawArchiveText && sawNewId, "conflict: archived content restored under new id");
+        expect(store.listArchived().isEmpty(), "conflict: archive empty after import");
+    }
+
+    // Per-index import leaves the other entry in archive.
+    {
+        const QString dataDir = makeDataDir();
+        expect(!dataDir.isEmpty(), "pick: data dir");
+        if (dataDir.isEmpty())
+            return;
+
+        DataStore store;
+        expect(store.load(), "pick: load");
+        TodoItem a = makeCompleted(QStringLiteral("pick-a"), 40);
+        TodoItem b = makeCompleted(QStringLiteral("pick-b"), 41);
+        expect(store.restoreTodo(a), "pick: seed a");
+        expect(store.restoreTodo(b), "pick: seed b");
+        expect(store.archiveCompletedOlderThan(30) == 2, "pick: archive both");
+        const QVector<ArchivedEntry> listed = store.listArchived();
+        expect(listed.size() == 2, "pick: listed 2");
+        int idxA = -1;
+        for (const ArchivedEntry &e : listed) {
+            if (e.item.text == QStringLiteral("pick-a"))
+                idxA = e.index;
+        }
+        expect(idxA >= 0, "pick: found pick-a index");
+        expect(store.importArchived(QVector<int>{idxA}) == 1, "pick: import one");
+        expect(store.findTodo(a.id) != nullptr, "pick: pick-a back");
+        expect(store.findTodo(b.id) == nullptr, "pick: pick-b still out");
+        bool stillB = false;
+        for (const ArchivedEntry &e : store.listArchived()) {
+            if (e.item.text == QStringLiteral("pick-b"))
+                stillB = true;
+        }
+        expect(stillB, "pick: pick-b remains in archive");
+        expect(store.listArchived().size() == 1, "pick: one left in archive");
+    }
+
+    if (g_failed == before)
+        pass("archive re-import + conflict id + per-index");
+}
+
 void testArchiveExpired()
 {
     const int before = g_failed;
@@ -514,6 +630,7 @@ int main(int argc, char *argv[])
     testDailySnapshots();
     testWeeklyMonthlySnapshots();
     testArchiveExpired();
+    testArchiveReimport();
 
     if (g_failed != 0) {
         std::fprintf(stderr, "%d assertion(s) failed\n", g_failed);

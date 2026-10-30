@@ -29,6 +29,12 @@ struct AppSettings {
     QHash<QString, bool> groupExpanded;
 };
 
+struct ArchivedEntry {
+    int index = -1; // position in todos-archive.json "archived" array
+    QString archivedAt;
+    TodoItem item;
+};
+
 class DataStore : public QObject
 {
     Q_OBJECT
@@ -65,6 +71,16 @@ public:
     // Append matching completed items to todos-archive.json, then remove from live store. Returns count.
     int archiveCompletedOlderThan(int days);
     int archiveAllCompleted();
+
+    // Read todos-archive.json (empty if missing/unreadable). Indices match current file order.
+    QVector<ArchivedEntry> listArchived() const;
+    // Re-import archive entries by index back into the main list (move: removed from archive).
+    // Conflict-id strategy (documented here and on TR #6):
+    //   - If archived item.id is free in the live list → keep that id.
+    //   - If it already exists → mint a new UUID for the restored copy; never overwrite
+    //     or skip. All other fields (text/due/completed/timestamps) stay intact.
+    int importArchived(const QVector<int> &indices);
+    int importAllArchived();
 
     QString dailyReportsPath() const;
     QString weeklyReportsPath() const;
@@ -150,6 +166,9 @@ private:
     int removeCompletedMatching(const std::function<bool(const TodoItem &)> &pred);
     int archiveThenRemoveMatching(const std::function<bool(const TodoItem &)> &pred);
     static bool isCompletedOlderThan(const TodoItem &item, int days, const QDateTime &now);
+    bool readArchiveFile(QJsonArray *archived, QString *error) const;
+    bool writeArchiveFile(const QJsonArray &archived, QString *error);
+    int importArchivedEntries(const QVector<int> &indices);
 
     QVector<TodoItem> m_todos;
     AppSettings m_settings;

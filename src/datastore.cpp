@@ -365,6 +365,41 @@ int DataStore::purgeAllCompleted()
     return removeCompletedMatching([](const TodoItem &) { return true; });
 }
 
+bool DataStore::readArchiveFile(QJsonArray *archived, QString *error) const
+{
+    if (!archived)
+        return false;
+    *archived = QJsonArray();
+    const QString path = archivePath();
+    if (!QFileInfo::exists(path))
+        return true;
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        if (error)
+            *error = QStringLiteral("无法打开归档文件");
+        return false;
+    }
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        if (error)
+            *error = QStringLiteral("归档文件损坏");
+        return false;
+    }
+    const QJsonValue arr = doc.object().value(QStringLiteral("archived"));
+    if (arr.isArray())
+        *archived = arr.toArray();
+    return true;
+}
+
+bool DataStore::writeArchiveFile(const QJsonArray &archived, QString *error)
+{
+    QJsonObject root;
+    root.insert(QStringLiteral("schemaVersion"), kSchemaVersion);
+    root.insert(QStringLiteral("archived"), archived);
+    return writeJson(archivePath(), root, error);
+}
+
 int DataStore::archiveThenRemoveMatching(const std::function<bool(const TodoItem &)> &pred)
 {
     QVector<TodoItem> matched;
@@ -377,18 +412,12 @@ int DataStore::archiveThenRemoveMatching(const std::function<bool(const TodoItem
         return 0;
 
     QJsonArray archived;
-    const QString path = archivePath();
-    if (QFileInfo::exists(path)) {
-        QFile file(path);
-        if (file.open(QIODevice::ReadOnly)) {
-            QJsonParseError parseError;
-            const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
-            if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
-                const QJsonValue arr = doc.object().value(QStringLiteral("archived"));
-                if (arr.isArray())
-                    archived = arr.toArray();
-            }
-        }
+    QString error;
+    if (!readArchiveFile(&archived, &error)) {
+        const QString message = QStringLiteral("归档读取失败：%1").arg(error);
+        addNotice(message);
+        emit errorOccurred(message);
+        return 0;
     }
 
     const QString stamped = QDateTime::currentDateTime().toString(Qt::ISODateWithMs);
@@ -399,11 +428,7 @@ int DataStore::archiveThenRemoveMatching(const std::function<bool(const TodoItem
         archived.append(entry);
     }
 
-    QJsonObject root;
-    root.insert(QStringLiteral("schemaVersion"), kSchemaVersion);
-    root.insert(QStringLiteral("archived"), archived);
-    QString error;
-    if (!writeJson(path, root, &error)) {
+    if (!writeArchiveFile(archived, &error)) {
         const QString message = QStringLiteral("归档写入失败：%1").arg(error);
         addNotice(message);
         emit errorOccurred(message);
@@ -438,6 +463,115 @@ int DataStore::archiveCompletedOlderThan(int days)
 int DataStore::archiveAllCompleted()
 {
     return archiveThenRemoveMatching([](const TodoItem &) { return true; });
+}
+
+QVector<ArchivedEntry> DataStore::listArchived() const
+{
+    QVector<ArchivedEntry> out;
+    QJsonArray archived;
+    if (!readArchiveFile(&archived, nullptr))
+        return out;
+    out.reserve(archived.size());
+    for (int i = 0; i < archived.size(); ++i) {
+        const QJsonObject entry = archived.at(i).toObject();
+        bool ok = false;
+        const TodoItem item = TodoItem::fromJson(entry.value(QStringLiteral("item")).toObject(), &ok);
+        if (!ok)
+            continue;
+        ArchivedEntry row;
+        row.index = i;
+        row.archivedAt = entry.value(QStringLiteral("archivedAt")).toString();
+        row.item = item;
+        out.append(row);
+    }
+    return out;
+}
+
+int DataStore::importArchivedEntries(const QVector<int> &indices)
+{
+    if (indices.isEmpty())
+        return 0;
+
+    QJsonArray archived;
+    QString error;
+    if (!readArchiveFile(&archived, &error)) {
+        const QString message = QStringLiteral("归档读取失败：%1").arg(error);
+        addNotice(message);
+        emit errorOccurred(message);
+        return 0;
+    }
+    if (archived.isEmpty())
+        return 0;
+
+    QSet<int> wanted;
+    for (int idx : indices) {
+        if (idx >= 0 && idx < archived.size())
+            wanted.insert(idx);
+    }
+    if (wanted.isEmpty())
+        return 0;
+
+    QSet<QString> liveIds;
+    liveIds.reserve(m_todos.size());
+    for (const TodoItem &item : std::as_const(m_todos))
+        liveIds.insert(item.id);
+
+    QVector<TodoItem> restored;
+    restored.reserve(wanted.size());
+    QJsonArray remaining;
+
+    for (int i = 0; i < archived.size(); ++i) {
+        const QJsonValue val = archived.at(i);
+        if (!wanted.contains(i)) {
+            remaining.append(val);
+            continue;
+        }
+        const QJsonObject entry = val.toObject();
+        bool ok = false;
+        TodoItem item = TodoItem::fromJson(entry.value(QStringLiteral("item")).toObject(), &ok);
+        if (!ok) {
+            remaining.append(val); // keep unreadable rows in archive
+            continue;
+        }
+        // Conflict-id: keep id when free; otherwise mint a new UUID (never overwrite live).
+        if (liveIds.contains(item.id))
+            item.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        liveIds.insert(item.id);
+        restored.append(item);
+    }
+
+    if (restored.isEmpty())
+        return 0;
+
+    if (!writeArchiveFile(remaining, &error)) {
+        const QString message = QStringLiteral("归档更新失败：%1").arg(error);
+        addNotice(message);
+        emit errorOccurred(message);
+        return 0;
+    }
+
+    for (const TodoItem &item : std::as_const(restored))
+        m_todos.append(item);
+    scheduleTodosSave(0);
+    emit todosChanged();
+    return restored.size();
+}
+
+int DataStore::importArchived(const QVector<int> &indices)
+{
+    return importArchivedEntries(indices);
+}
+
+int DataStore::importAllArchived()
+{
+    QJsonArray archived;
+    if (!readArchiveFile(&archived, nullptr) || archived.isEmpty())
+        return 0;
+    QVector<int> all;
+    all.reserve(archived.size());
+    for (int i = 0; i < archived.size(); ++i)
+        all.append(i);
+    return importArchivedEntries(all);
 }
 
 void DataStore::applyRetentionOnLoad()

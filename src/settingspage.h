@@ -54,5 +54,7 @@ private:
     TextAction *m_purgeExpiredAction = nullptr;
     TextAction *m_purgeAllAction = nullptr;
     TextAction *m_archiveExpiredAction = nullptr;
+    TextAction *m_importAllArchivedAction = nullptr;
+    TextAction *m_importPickArchivedAction = nullptr;
     bool m_syncing = false;
 };
