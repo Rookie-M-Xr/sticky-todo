@@ -24,18 +24,24 @@
 
 无可用托盘时：点 `×` / `—` 会保存并退出（TR #14），不会卡死。
 
-## Windows SmartScreen
+## Windows SmartScreen（「Windows 已保护你的电脑」）
 
-本程序未购买商业代码签名证书，Windows 11 可能显示“Windows 已保护你的电脑”，并标注“发布者未知”。这不是病毒提示。
+未做代码签名时，首次双击可能出现蓝底提示「Windows 已保护你的电脑 / Microsoft Defender SmartScreen 阻止了无法识别的应用」。**这不是病毒**，是系统对「发布者未知」的拦截（与是否离线、是否 Qt 无关；从网上下载的未签名包更常见）。
 
-推荐处理：
+### 怎么继续运行
 
-1. 解压前右键 ZIP → 属性 → 勾选“解除锁定” → 应用，然后再解压。
-2. 如果已经解压，双击本目录的 `unblock.cmd`；或在当前目录 PowerShell 运行 `Get-ChildItem -Recurse -File | Unblock-File`。
-3. 以后也可以双击 `Start StickyTodo.cmd`，它会自动解除本目录文件的 Internet 标记并启动程序。
-4. 若仍出现提示，点“更多信息”→“仍要运行”。
+1. 点「**更多信息**」。
+2. 再点「**仍要运行**」（默认只有「不运行」，必须先点更多信息才会出现）。
 
-彻底消除该提示需要代码签名证书；不要为了这个提示关闭系统 SmartScreen。
+### 减轻「来自互联网」标记（可选）
+
+1. 解压前：右键 ZIP → 属性 → 勾选「解除锁定」→ 应用，再解压。
+2. 已解压：双击本目录 `unblock.cmd`，或 PowerShell：`Get-ChildItem -Recurse -File | Unblock-File`。
+3. `Start StickyTodo.cmd` 也会尝试解除本目录标记；**不能替代**代码签名，也不保证不再出现 SmartScreen。
+
+### 根治
+
+签署发布产物（Authenticode；EV 更容易过 SmartScreen）并积累下载信誉。请**不要**为消提示关闭系统 SmartScreen。当前产品决定暂不采购证书；本 TR 只做文档与发版检查。
 
 ## 日常操作
 

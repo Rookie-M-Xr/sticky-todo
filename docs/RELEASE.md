@@ -28,6 +28,12 @@
 6. **GitHub Release**：创建 `vX.Y.Z` Release，正文用 CHANGELOG 该节；上传上述两个资产。
 7. **频道**：`[release] vX.Y.Z` + tip SHA + Release 链接；@小测 对 zip/tar **解压冒烟**（不必回归全部历史 TR）。
 
+### 发版前 Win 包检查（TR #17）
+
+- zip 内关键 `StickyTodo.exe` / DLL **无** Zone.Identifier（`Get-Item .\StickyTodo.exe -Stream Zone.Identifier` 应报不存在；或打包机对产物 `Unblock-File` 后再打 zip）。
+- 包内含可用的 `unblock.cmd`。
+- `dist/README` SmartScreen 节与上一致（含「更多信息 → 仍要运行」）。
+
 ## 角色
 
 | 角色 | 职责 |
