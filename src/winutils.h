@@ -19,6 +19,7 @@ bool autoStartEnabled(QString *command = nullptr);
 
 void setTopMost(QWidget *widget, bool on);
 void activateWindow(QWidget *widget);
+bool isOsForeground(QWidget *widget);
 void setAppUserModelId();
 void prepareRoundedPopup(QWidget *popup);
 void suppressSystemFrame(QWidget *window);

@@ -2210,10 +2210,17 @@ void MainWindow::hideToTray()
     }
 }
 
+bool MainWindow::isOsForeground() const
+{
+    return WinUtils::isOsForeground(const_cast<MainWindow *>(this));
+}
+
 void MainWindow::toggleByHotkey()
 {
-    // Visible + active → hide; otherwise show/focus (including collapsed tab).
-    const bool shouldHide = isVisible() && !isMinimized() && isActiveWindow() && !m_collapsed;
+    // Visible + OS foreground → hide; otherwise show/focus (including collapsed tab).
+    // Win32: use GetForegroundWindow — isActiveWindow() can stay true while another
+    // process owns the real foreground, which wrongly hid a still-visible note.
+    const bool shouldHide = isVisible() && !isMinimized() && isOsForeground() && !m_collapsed;
     if (!shouldHide) {
         showAndActivate();
         return;

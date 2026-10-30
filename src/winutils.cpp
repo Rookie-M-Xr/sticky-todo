@@ -425,6 +425,30 @@ void activateWindow(QWidget *widget)
     SetForegroundWindow(hwnd);
 }
 
+
+bool isOsForeground(QWidget *widget)
+{
+    if (!widget)
+        return false;
+    // Ensure native handle exists before querying.
+    widget->winId();
+    const HWND hwnd = reinterpret_cast<HWND>(widget->winId());
+    if (!hwnd)
+        return false;
+    const HWND fg = GetForegroundWindow();
+    if (!fg)
+        return false;
+    // Compare top-level roots: Qt winId is usually already top-level for MainWindow,
+    // but GA_ROOT covers embedded / reparented edge cases without relying on isActiveWindow.
+    HWND ours = GetAncestor(hwnd, GA_ROOT);
+    if (!ours)
+        ours = hwnd;
+    HWND fgRoot = GetAncestor(fg, GA_ROOT);
+    if (!fgRoot)
+        fgRoot = fg;
+    return fg == hwnd || fg == ours || fgRoot == ours;
+}
+
 void setAppUserModelId()
 {
     SetCurrentProcessExplicitAppUserModelID(L"StickyTodo.Desktop.1");

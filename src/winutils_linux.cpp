@@ -118,6 +118,20 @@ void activateWindow(QWidget *widget)
         window->requestActivate();
 }
 
+
+bool isOsForeground(QWidget *widget)
+{
+    if (!widget)
+        return false;
+    // X11: isActiveWindow is generally accurate. Also accept Qt focusWindow match.
+    // Wayland: best-effort only (compositor may not expose true OS foreground).
+    if (widget->isActiveWindow())
+        return true;
+    QWindow *fw = QGuiApplication::focusWindow();
+    QWindow *ww = widget->windowHandle();
+    return fw && ww && (fw == ww);
+}
+
 void setAppUserModelId()
 {
 }

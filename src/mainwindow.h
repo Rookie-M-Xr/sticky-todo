@@ -112,6 +112,7 @@ private:
     void minimizeToTray();
     void hideToTray();
     void toggleByHotkey();
+    bool isOsForeground() const;
     void applyGlobalHotkey(bool quiet);
     void quitApplication();
     void finishQuit();
