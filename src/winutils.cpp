@@ -40,6 +40,7 @@
 #include <shlobj.h>
 #include <servprov.h>
 #include <shlguid.h>
+#include <taskschd.h>
 
 namespace {
 
@@ -388,6 +389,164 @@ bool writeHandoffScript(const QString &scriptPath, const QString &srcDir, const 
     if (file.write(bytes) != bytes.size())
         return false;
     return file.commit();
+}
+
+bool launchHandoffViaTaskScheduler(const QString &scriptPath)
+{
+    // TR #15: Task Scheduler service starts the action at the interactive user's
+    // Medium IL. Works when in-proc / Explorer ShellExecute stays Low.
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    bool shouldUninit = false;
+    if (hr == S_OK || hr == S_FALSE) {
+        shouldUninit = true;
+    } else if (hr != RPC_E_CHANGED_MODE) {
+        return false;
+    }
+
+    ITaskService *service = nullptr;
+    hr = CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER,
+                          IID_ITaskService, reinterpret_cast<void **>(&service));
+    if (FAILED(hr) || !service) {
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    VARIANT vEmpty;
+    VariantInit(&vEmpty);
+    hr = service->Connect(vEmpty, vEmpty, vEmpty, vEmpty);
+    if (FAILED(hr)) {
+        service->Release();
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    BSTR rootPath = SysAllocString(L"\\");
+    ITaskFolder *folder = nullptr;
+    hr = service->GetFolder(rootPath, &folder);
+    SysFreeString(rootPath);
+    if (FAILED(hr) || !folder) {
+        service->Release();
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    const wchar_t kTaskName[] = L"StickyTodoHandoff";
+    BSTR taskName = SysAllocString(kTaskName);
+    folder->DeleteTask(taskName, 0); // ignore missing
+
+    ITaskDefinition *task = nullptr;
+    hr = service->NewTask(0, &task);
+    if (FAILED(hr) || !task) {
+        SysFreeString(taskName);
+        folder->Release();
+        service->Release();
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    IPrincipal *principal = nullptr;
+    if (SUCCEEDED(task->get_Principal(&principal)) && principal) {
+        principal->put_LogonType(TASK_LOGON_INTERACTIVE_TOKEN);
+        principal->put_RunLevel(TASK_RUNLEVEL_LUA);
+        principal->Release();
+    }
+
+    ITaskSettings *settings = nullptr;
+    if (SUCCEEDED(task->get_Settings(&settings)) && settings) {
+        settings->put_DisallowStartIfOnBatteries(VARIANT_FALSE);
+        settings->put_StopIfGoingOnBatteries(VARIANT_FALSE);
+        settings->put_AllowDemandStart(VARIANT_TRUE);
+        settings->put_StartWhenAvailable(VARIANT_TRUE);
+        settings->Release();
+    }
+
+    IActionCollection *actions = nullptr;
+    hr = task->get_Actions(&actions);
+    if (FAILED(hr) || !actions) {
+        task->Release();
+        SysFreeString(taskName);
+        folder->Release();
+        service->Release();
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    IAction *action = nullptr;
+    hr = actions->Create(TASK_ACTION_EXEC, &action);
+    actions->Release();
+    if (FAILED(hr) || !action) {
+        task->Release();
+        SysFreeString(taskName);
+        folder->Release();
+        service->Release();
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    IExecAction *execAction = nullptr;
+    hr = action->QueryInterface(IID_IExecAction, reinterpret_cast<void **>(&execAction));
+    action->Release();
+    if (FAILED(hr) || !execAction) {
+        task->Release();
+        SysFreeString(taskName);
+        folder->Release();
+        service->Release();
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    BSTR cmdPath = SysAllocString(L"cmd.exe");
+    const std::wstring args =
+        L"/c \"" + QDir::toNativeSeparators(scriptPath).toStdWString() + L"\"";
+    BSTR cmdArgs = SysAllocString(args.c_str());
+    execAction->put_Path(cmdPath);
+    execAction->put_Arguments(cmdArgs);
+    SysFreeString(cmdPath);
+    SysFreeString(cmdArgs);
+    execAction->Release();
+
+    VARIANT vUser;
+    VARIANT vPassword;
+    VARIANT vSddl;
+    VariantInit(&vUser);
+    VariantInit(&vPassword);
+    VariantInit(&vSddl);
+    IRegisteredTask *registered = nullptr;
+    hr = folder->RegisterTaskDefinition(taskName, task, TASK_CREATE_OR_UPDATE, vUser,
+                                        vPassword, TASK_LOGON_INTERACTIVE_TOKEN, vSddl,
+                                        &registered);
+    task->Release();
+    if (FAILED(hr) || !registered) {
+        SysFreeString(taskName);
+        folder->Release();
+        service->Release();
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    VARIANT vParams;
+    VariantInit(&vParams);
+    IRunningTask *running = nullptr;
+    hr = registered->Run(vParams, &running);
+    if (running)
+        running->Release();
+    registered->Release();
+    // Keep the task definition for overwrite next time; do not DeleteTask after
+    // Run — that can tear down the just-started action on some builds.
+    SysFreeString(taskName);
+    folder->Release();
+    service->Release();
+    if (shouldUninit)
+        CoUninitialize();
+    return SUCCEEDED(hr);
 }
 
 bool launchHandoffViaShellApplication(const QString &scriptPath, const QString &workingDir)
@@ -910,7 +1069,9 @@ bool handoffIfLowIntegrity()
     if (!writeHandoffScript(scriptPath, exeDir, dataDir))
         return false;
 
-    // TR #15: do not use explorer.exe — Win11 selects the .cmd instead of running it.
+    // TR #15: prefer Task Scheduler (Medium interactive), then Explorer Shell.
+    if (launchHandoffViaTaskScheduler(scriptPath))
+        return true;
     return launchHandoffViaShellApplication(scriptPath, exeDir);
 }
 
