@@ -33,6 +33,10 @@
 #include <shellapi.h>
 #include <shobjidl.h>
 #include <dwmapi.h>
+#include <objbase.h>
+#include <oleauto.h>
+#include <exdisp.h>
+#include <shldisp.h>
 
 namespace {
 
@@ -347,9 +351,9 @@ bool writeHandoffScript(const QString &scriptPath, const QString &srcDir, const 
 {
     const QString src = QDir::toNativeSeparators(srcDir);
     const QString data = QDir::toNativeSeparators(dataDir);
-    // Medium cmd (started via explorer) copies package → LocalAppData runtime
-    // then relaunches with the same --data-dir. A low process cannot raise its
-    // own IL; explorer as CreateProcess parent of the .cmd yields medium.
+    // Medium cmd (started via Shell.Application) copies package → LocalAppData
+    // runtime then relaunches with the same --data-dir. A low process cannot
+    // raise its own IL; Shell.Application ShellExecute yields a medium child.
     QString body;
     body += QStringLiteral("@echo off\r\n");
     body += QStringLiteral("setlocal\r\n");
@@ -381,6 +385,76 @@ bool writeHandoffScript(const QString &scriptPath, const QString &srcDir, const 
     if (file.write(bytes) != bytes.size())
         return false;
     return file.commit();
+}
+
+bool launchHandoffViaShellApplication(const QString &scriptPath, const QString &workingDir)
+{
+    // TR #15: explorer.exe + .cmd only selects the file on Win11. Shell.Application
+    // (IShellDispatch2::ShellExecute) brokers a Medium-IL child from Low.
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    bool shouldUninit = false;
+    if (hr == S_OK || hr == S_FALSE) {
+        shouldUninit = true;
+    } else if (hr == RPC_E_CHANGED_MODE) {
+        // Already initialized on another apartment model; proceed without uninit.
+    } else {
+        return false;
+    }
+
+    IShellDispatch2 *shell = nullptr;
+    hr = CoCreateInstance(CLSID_Shell, nullptr, CLSCTX_INPROC_SERVER,
+                          IID_IShellDispatch2, reinterpret_cast<void **>(&shell));
+    if (FAILED(hr) || !shell) {
+        hr = CoCreateInstance(CLSID_Shell, nullptr, CLSCTX_LOCAL_SERVER,
+                              IID_IShellDispatch2, reinterpret_cast<void **>(&shell));
+    }
+    if (FAILED(hr) || !shell) {
+        if (shouldUninit)
+            CoUninitialize();
+        return false;
+    }
+
+    const std::wstring scriptNative =
+        QDir::toNativeSeparators(scriptPath).toStdWString();
+    const std::wstring dirNative =
+        QDir::toNativeSeparators(workingDir).toStdWString();
+    const std::wstring args = L"/c \"" + scriptNative + L"\"";
+
+    BSTR bstrFile = SysAllocString(L"cmd.exe");
+    VARIANT vArgs;
+    VARIANT vDir;
+    VARIANT vOp;
+    VARIANT vShow;
+    VariantInit(&vArgs);
+    VariantInit(&vDir);
+    VariantInit(&vOp);
+    VariantInit(&vShow);
+
+    vArgs.vt = VT_BSTR;
+    vArgs.bstrVal = SysAllocString(args.c_str());
+    vDir.vt = VT_BSTR;
+    vDir.bstrVal = SysAllocString(dirNative.c_str());
+    vOp.vt = VT_BSTR;
+    vOp.bstrVal = SysAllocString(L"open");
+    vShow.vt = VT_I4;
+    vShow.lVal = SW_HIDE;
+
+    bool ok = false;
+    if (bstrFile && vArgs.bstrVal && vDir.bstrVal && vOp.bstrVal) {
+        hr = shell->ShellExecute(bstrFile, vArgs, vDir, vOp, vShow);
+        ok = SUCCEEDED(hr);
+    }
+
+    VariantClear(&vArgs);
+    VariantClear(&vDir);
+    VariantClear(&vOp);
+    VariantClear(&vShow);
+    if (bstrFile)
+        SysFreeString(bstrFile);
+    shell->Release();
+    if (shouldUninit)
+        CoUninitialize();
+    return ok;
 }
 
 LSTATUS queryAutoStart(QString *command)
@@ -755,12 +829,8 @@ bool handoffIfLowIntegrity()
     if (!writeHandoffScript(scriptPath, exeDir, dataDir))
         return false;
 
-    const std::wstring scriptQuoted =
-        L"\"" + QDir::toNativeSeparators(scriptPath).toStdWString() + L"\"";
-    // open via explorer so CreateProcess parent is medium (not this low process)
-    const HINSTANCE rc = ShellExecuteW(nullptr, L"open", L"explorer.exe",
-                                       scriptQuoted.c_str(), nullptr, SW_HIDE);
-    return reinterpret_cast<INT_PTR>(rc) > 32;
+    // TR #15: do not use explorer.exe — Win11 selects the .cmd instead of running it.
+    return launchHandoffViaShellApplication(scriptPath, exeDir);
 }
 
 
