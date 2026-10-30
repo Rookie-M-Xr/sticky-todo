@@ -28,7 +28,7 @@ int main(int argc, char *argv[])
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/app.png")));
     app.setStyle(QStringLiteral("Fusion"));
     app.setFont(Theme::uiFont(13));
-    app.setStyleSheet(Theme::styleSheet());
+    Theme::applyApplicationChrome();
 
     WinUtils::setAppUserModelId();
     WinUtils::clearDownloadedFileMarks();
