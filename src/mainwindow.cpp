@@ -35,6 +35,7 @@
 #include <QPropertyAnimation>
 #include <QPushButton>
 #include <QScreen>
+#include <limits>
 #include <QShortcut>
 #include <QShowEvent>
 #include <QSignalBlocker>
@@ -698,11 +699,38 @@ QScreen *MainWindow::screenByName(const QString &name) const
     return nullptr;
 }
 
+
+QScreen *MainWindow::nearestScreen(const QPoint &global) const
+{
+    if (QScreen *at = QGuiApplication::screenAt(global))
+        return at;
+
+    // When the point sits in a multi-monitor gap (or the dead zone created by
+    // uniting unequal-height screens), pick the closest availableGeometry.
+    QScreen *best = nullptr;
+    qint64 bestDist = std::numeric_limits<qint64>::max();
+    for (QScreen *screen : QGuiApplication::screens()) {
+        const QRect avail = screen->availableGeometry();
+        const int dx = global.x() < avail.left() ? avail.left() - global.x()
+                     : global.x() > avail.right() ? global.x() - avail.right() : 0;
+        const int dy = global.y() < avail.top() ? avail.top() - global.y()
+                     : global.y() > avail.bottom() ? global.y() - avail.bottom() : 0;
+        const qint64 dist = qint64(dx) * dx + qint64(dy) * dy;
+        if (dist < bestDist) {
+            bestDist = dist;
+            best = screen;
+        }
+    }
+    return best;
+}
+
 QScreen *MainWindow::screenForWindow() const
 {
     // Prefer geometry over the cached name so multi-monitor drag/dock
     // follows the window's current screen instead of a stale m_screenName.
-    QScreen *screen = QGuiApplication::screenAt(frameGeometry().center());
+    // nearestScreen also covers inter-monitor gaps / unequal-height dead zones
+    // where screenAt(center) is null.
+    QScreen *screen = nearestScreen(frameGeometry().center());
     if (screen)
         return screen;
     screen = screenByName(m_screenName);
@@ -1127,6 +1155,20 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         const int maxY = avail.bottom() - 40;
         target.setX(qBound(minX, target.x(), qMax(minX, maxX)));
         target.setY(qBound(avail.top(), target.y(), qMax(avail.top(), maxY)));
+        // Union AABB can include dead space between / below unequal screens.
+        // Keep the frame center on a real screen so release snap cannot jump.
+        {
+            const QPoint center = target + QPoint(width() / 2, height() / 2);
+            if (!QGuiApplication::screenAt(center)) {
+                if (QScreen *near = nearestScreen(center)) {
+                    const QRect a = near->availableGeometry();
+                    QPoint c = center;
+                    c.setX(qBound(a.left(), c.x(), a.right()));
+                    c.setY(qBound(a.top(), c.y(), a.bottom()));
+                    target = c - QPoint(width() / 2, height() / 2);
+                }
+            }
+        }
         move(target);
         return true;
     }
@@ -1735,9 +1777,9 @@ void MainWindow::finishDrag()
     if (!isVisible())
         return;
 
-    QScreen *screen = QGuiApplication::screenAt(frameGeometry().center());
+    QScreen *screen = nearestScreen(frameGeometry().center());
     if (!screen)
-        screen = QGuiApplication::screenAt(QCursor::pos());
+        screen = nearestScreen(QCursor::pos());
     if (!screen)
         screen = screenForWindow();
     if (!screen)

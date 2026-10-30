@@ -76,6 +76,7 @@ private:
     QString trayTipText() const;
     QScreen *screenForWindow() const;
     QScreen *screenByName(const QString &name) const;
+    QScreen *nearestScreen(const QPoint &global) const;
     QRect defaultExpandedRect(QScreen *screen) const;
     QRect dockedRectFor(const QSize &size, QScreen *screen, int side) const;
     QRect collapsedRect() const;
