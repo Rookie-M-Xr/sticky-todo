@@ -4,6 +4,12 @@
 #ifndef WINVER
 #define WINVER 0x0A00
 #endif
+#ifndef NTDDI_VERSION
+#define NTDDI_VERSION 0x0A000000 /* NTDDI_WIN10: ungate Shell Win7+ prototypes */
+#endif
+#ifndef _WIN32_IE
+#define _WIN32_IE 0x0A00
+#endif
 
 #include "winutils.h"
 
@@ -31,6 +37,8 @@
 #include <windows.h>
 #include <winreg.h>
 #include <shellapi.h>
+#include <shobjidl.h> // SetCurrentProcessExplicitAppUserModelID (Shell32 Win7+)
+#include <shlobj.h>
 #include <dwmapi.h>
 
 namespace {
