@@ -650,13 +650,7 @@ Snackbar::Snackbar(QWidget *parent)
     m_label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     layout->addWidget(m_label, 1);
 
-    m_actionButton = new QPushButton(this);
-    m_actionButton->setCursor(Qt::PointingHandCursor);
-    m_actionButton->setFocusPolicy(Qt::NoFocus);
-    m_actionButton->setFont(Theme::uiFont(12, QFont::DemiBold));
-    m_actionButton->setStyleSheet(QStringLiteral(
-        "QPushButton { background: transparent; border: none; color: #f1e6b9; padding: 3px 6px; "
-        "border-radius: 5px; } QPushButton:hover { background: rgba(255,255,255,0.12); }"));
+    m_actionButton = makeActionButton(QString());
     layout->addWidget(m_actionButton, 0);
     m_actionButton->hide();
     connect(m_actionButton, &QPushButton::clicked, this, &Snackbar::triggerAction);
@@ -683,18 +677,75 @@ Snackbar::Snackbar(QWidget *parent)
 void Snackbar::showMessage(const QString &message, const QString &actionText,
                            std::function<void()> action, int timeoutMs)
 {
-    m_action = std::move(action);
+    QVector<QPair<QString, std::function<void()>>> actions;
+    if (!actionText.isEmpty())
+        actions.append({actionText, std::move(action)});
+    showActions(message, actions, timeoutMs);
+}
+
+void Snackbar::showActions(const QString &message,
+                           const QVector<QPair<QString, std::function<void()>>> &actions,
+                           int timeoutMs)
+{
+    clearExtraActions();
+    m_action = nullptr;
     m_label->setText(message);
     m_label->setToolTip(message);
-    m_actionButton->setText(actionText);
-    m_actionButton->setVisible(!actionText.isEmpty());
+    if (actions.size() == 1) {
+        m_action = actions.front().second;
+        m_actionButton->setText(actions.front().first);
+        m_actionButton->setVisible(true);
+    } else {
+        m_actionButton->hide();
+        auto *box = qobject_cast<QHBoxLayout *>(layout());
+        for (const auto &item : actions) {
+            QPushButton *button = makeActionButton(item.first);
+            button->setToolTip(QStringLiteral("%1 分钟").arg(item.first));
+            const std::function<void()> callback = item.second;
+            connect(button, &QPushButton::clicked, this, [this, callback] {
+                m_action = nullptr;
+                dismiss();
+                if (callback)
+                    callback();
+            });
+            if (box)
+                box->addWidget(button, 0);
+            m_extraButtons.append(button);
+        }
+    }
     m_timer->stop();
     m_hiding = false;
     show();
     raise();
     fadeTo(1.0, 150, false);
+    refreshGeometry();
     if (timeoutMs > 0)
         m_timer->start(timeoutMs);
+}
+
+QPushButton *Snackbar::makeActionButton(const QString &text)
+{
+    auto *button = new QPushButton(text, this);
+    button->setCursor(Qt::PointingHandCursor);
+    button->setFocusPolicy(Qt::NoFocus);
+    button->setFont(Theme::uiFont(12, QFont::DemiBold));
+    button->setStyleSheet(QStringLiteral(
+        "QPushButton { background: transparent; border: none; color: #f1e6b9; padding: 3px 5px; "
+        "border-radius: 5px; } QPushButton:hover { background: rgba(255,255,255,0.12); }"));
+    return button;
+}
+
+void Snackbar::clearExtraActions()
+{
+    for (QPushButton *button : std::as_const(m_extraButtons)) {
+        if (!button)
+            continue;
+        if (auto *box = qobject_cast<QHBoxLayout *>(layout()))
+            box->removeWidget(button);
+        button->hide();
+        button->deleteLater();
+    }
+    m_extraButtons.clear();
 }
 
 void Snackbar::dismiss()
@@ -746,9 +797,13 @@ void Snackbar::refreshGeometry()
 {
     if (!m_label)
         return;
-    const int actionWidth = m_actionButton->isVisible()
-        ? m_actionButton->sizeHint().width() + 4
-        : 0;
+    int actionWidth = 0;
+    if (m_actionButton->isVisible())
+        actionWidth += m_actionButton->sizeHint().width() + 4;
+    for (const QPushButton *button : std::as_const(m_extraButtons)) {
+        if (button && button->isVisible())
+            actionWidth += button->sizeHint().width() + 8;
+    }
     m_label->setMaximumWidth(qMax(40, width() - 28 - actionWidth));
 }
 

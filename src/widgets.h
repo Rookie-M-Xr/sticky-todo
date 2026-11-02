@@ -6,6 +6,8 @@
 #include <QAbstractButton>
 #include <QColor>
 #include <QDate>
+#include <QPair>
+#include <QVector>
 #include <QWidget>
 
 #include <functional>
@@ -194,6 +196,9 @@ public:
 
     void showMessage(const QString &message, const QString &actionText = QString(),
                      std::function<void()> action = {}, int timeoutMs = 6000);
+    void showActions(const QString &message,
+                     const QVector<QPair<QString, std::function<void()>>> &actions,
+                     int timeoutMs = 6000);
     void dismiss();
 
 protected:
@@ -204,9 +209,12 @@ private:
     void fadeTo(qreal opacity, int duration, bool hideWhenDone);
     void refreshGeometry();
     void triggerAction();
+    void clearExtraActions();
+    QPushButton *makeActionButton(const QString &text);
 
     QLabel *m_label = nullptr;
     QPushButton *m_actionButton = nullptr;
+    QVector<QPushButton *> m_extraButtons;
     QTimer *m_timer = nullptr;
     QGraphicsOpacityEffect *m_effect = nullptr;
     QPropertyAnimation *m_animation = nullptr;
