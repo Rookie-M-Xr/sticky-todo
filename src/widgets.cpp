@@ -435,12 +435,15 @@ PomodoroChip::PomodoroChip(QWidget *parent)
     refreshTip();
 }
 
-void PomodoroChip::setState(bool active, int remainingSeconds)
+void PomodoroChip::setState(bool active, int remainingSeconds, bool paused)
 {
     const int remaining = qMax(0, remainingSeconds);
-    if (m_active == active && m_remaining == remaining)
+    if (!active)
+        paused = false;
+    if (m_active == active && m_remaining == remaining && m_paused == paused)
         return;
     m_active = active;
+    m_paused = paused;
     m_remaining = remaining;
     refreshTip();
     updateGeometry();
@@ -458,10 +461,12 @@ void PomodoroChip::setDefaultMinutes(int minutes)
 
 void PomodoroChip::refreshTip()
 {
-    if (m_active)
-        setToolTip(QStringLiteral("停止番茄钟  %1").arg(formatPomodoroClock(m_remaining)));
-    else
+    if (!m_active)
         setToolTip(formatPomodoroStartHint(m_defaultMinutes));
+    else if (m_paused)
+        setToolTip(formatPomodoroResumeHint(m_remaining));
+    else
+        setToolTip(formatPomodoroPauseHint(m_remaining));
 }
 
 QSize PomodoroChip::sizeHint() const
@@ -481,9 +486,11 @@ void PomodoroChip::paintEvent(QPaintEvent *event)
     const QRectF box = QRectF(rect()).adjusted(0.6, 0.6, -0.6, -0.6);
 
     if (m_active) {
-        QColor background = QColor(220, 226, 194, m_hover || isDown() ? 210 : 165);
-        QColor border(141, 155, 108, 140);
-        QColor foreground = Theme::AccentDark;
+        QColor background = m_paused
+            ? QColor(210, 205, 180, m_hover || isDown() ? 200 : 150)
+            : QColor(220, 226, 194, m_hover || isDown() ? 210 : 165);
+        QColor border = m_paused ? QColor(157, 148, 126, 140) : QColor(141, 155, 108, 140);
+        QColor foreground = m_paused ? Theme::InkSoft : Theme::AccentDark;
         painter.setPen(QPen(border, 1.0));
         painter.setBrush(background);
         painter.drawRoundedRect(box, 7, 7);

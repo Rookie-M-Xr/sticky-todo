@@ -132,8 +132,9 @@ QString shortDueLabel(QDate due, QDate today);
 QString fullDueLabel(QDate due, QDate today);
 QString relativeDueHint(QDate due, QDate today);
 
-// Session-only focus clock (TR #18). Default minutes live in settings (TR #31).
+// Session-only focus clock (TR #18 + #52 pause). Default minutes live in settings (TR #31).
 // Optional cumulative stats (TR #35) live in pomodoro_stats.json — never todos.json.
+// Pause is in-process only; remaining freezes and is not written to JSON.
 constexpr int kPomodoroMinMinutes = 1;
 constexpr int kPomodoroMaxMinutes = 120;
 constexpr int kPomodoroDefaultMinutes = 25;
@@ -143,10 +144,26 @@ int clampPomodoroMinutes(int minutes);
 int pomodoroSecondsForMinutes(int minutes);
 QString formatPomodoroStartHint(int minutes);
 QString formatPomodoroClock(int remainingSeconds);
+QString formatPomodoroPauseHint(int remainingSeconds);
+QString formatPomodoroResumeHint(int remainingSeconds);
 int pomodoroRemainingSeconds(const QDateTime &deadline,
                              const QDateTime &now = QDateTime());
 // Same id toggles off (empty). A different id silently replaces the old one.
 QString pomodoroAfterToggle(const QString &currentId, const QString &requestedId);
+// Chip / 开始菜单：开、暂停、继续。暂停中点另一条为 Ignore（仍占互斥槽）。
+enum class PomodoroClickAction {
+    Start,
+    Pause,
+    Resume,
+    Ignore
+};
+PomodoroClickAction pomodoroOnChipClick(const QString &currentId, bool paused,
+                                        const QString &requestedId);
+int pomodoroFrozenSeconds(int remainingSeconds);
+QDateTime pomodoroResumeDeadline(int remainingSeconds,
+                                 const QDateTime &now = QDateTime());
+int pomodoroSessionSecondsLeft(const QDateTime &deadline, bool paused, int pausedRemaining,
+                               const QDateTime &now = QDateTime());
 // Complete only when remaining has hit zero. Manual mid-stop (remaining > 0) does not.
 bool pomodoroCountsAsComplete(int remainingSeconds);
 int pomodoroElapsedSeconds(int sessionMinutes, int remainingSeconds);

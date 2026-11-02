@@ -133,12 +133,16 @@ private:
     void handleCompletion(const QString &id, bool completed);
     void handleTextEdited(const QString &id, const QString &text);
     void handlePomodoroToggle(const QString &id);
+    void handlePomodoroStop(const QString &id);
     void startPomodoro(const QString &id);
+    void pausePomodoro();
+    void resumePomodoro();
     void stopPomodoro();
     void recordCurrentPomodoro();
     void onPomodoroTick();
     void applyPomodoroToView();
     void notifyPomodoroFinished(const QString &text, int minutes);
+    void ensurePomodoroTick();
     int pomodoroSecondsLeft() const;
     void onReminderTick();
     void notifyReminderDue(const QString &id, const QString &text);
@@ -192,6 +196,9 @@ private:
     QString m_pomodoroId;
     QDateTime m_pomodoroDeadline;
     int m_pomodoroSessionMinutes = kPomodoroDefaultMinutes;
+    // In-process only (TR #52). Paused remaining is not persisted.
+    bool m_pomodoroPaused = false;
+    int m_pomodoroPausedLeft = 0;
     QTimer *m_reminderTick = nullptr;
     // In-process only (TR #51): next-fire override. Not persisted.
     QHash<QString, QDateTime> m_reminderSnoozeUntil;
