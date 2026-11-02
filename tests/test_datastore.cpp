@@ -1,4 +1,5 @@
 #include "datastore.h"
+#include "theme.h"
 
 #include <QCoreApplication>
 #include <QDate>
@@ -1855,6 +1856,35 @@ void testReminderWindowPersistAndLegacyMigrate()
         pass("reminder window persist + legacy migrate");
 }
 
+void testTooltipChromeContract()
+{
+    const int before = g_failed;
+    const QPalette palette = Theme::applicationPalette();
+    for (const QPalette::ColorGroup group :
+         {QPalette::Active, QPalette::Inactive, QPalette::Disabled}) {
+        expect(palette.color(group, QPalette::ToolTipBase) == Theme::ToolTipFill,
+               "tooltip: ToolTipBase is paper fill");
+        expect(palette.color(group, QPalette::ToolTipText) == Theme::ToolTipInk,
+               "tooltip: ToolTipText is paper ink");
+        expect(palette.color(group, QPalette::ToolTipBase).alpha() == 255,
+               "tooltip: ToolTipBase opaque");
+        expect(palette.color(group, QPalette::Window).alpha() == 255,
+               "tooltip: Window opaque (no parent-window leak)");
+    }
+    expect(Theme::ToolTipRadius == 5, "tooltip: paper radius 5");
+    const QString css = Theme::styleSheet();
+    expect(css.contains(QStringLiteral("QToolTip")), "tooltip: QSS targets QToolTip");
+    expect(css.contains(QStringLiteral("QTipLabel")),
+           "tooltip: QSS targets QTipLabel (reuse path)");
+    expect(css.contains(QStringLiteral("border-radius: 5px")),
+           "tooltip: QSS radius matches mask");
+    expect(css.contains(QStringLiteral("#fffdf3")), "tooltip: QSS paper fill");
+    expect(css.contains(QStringLiteral("#4d483a")), "tooltip: QSS paper ink");
+
+    if (g_failed == before)
+        pass("tooltip chrome contract (paper + rounded, all groups)");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -1886,6 +1916,7 @@ int main(int argc, char *argv[])
     testReminderCapAndSkipInvalid();
     testReminderActiveWindowAndInterval();
     testReminderWindowPersistAndLegacyMigrate();
+    testTooltipChromeContract();
 
     if (g_failed != 0) {
         std::fprintf(stderr, "%d assertion(s) failed\n", g_failed);
