@@ -206,6 +206,11 @@ TodoRow::TodoRow(const TodoItem &item, QWidget *parent)
         emit deleteRequested(m_item.id);
     });
 
+    m_pomodoroChip = new PomodoroChip(this);
+    connect(m_pomodoroChip, &QAbstractButton::clicked, this, [this] {
+        emit pomodoroToggleRequested(m_item.id);
+    });
+
     m_editor = new QLineEdit(this);
     m_editor->setFrame(false);
     m_editor->setFont(Theme::uiFont(13));
@@ -227,7 +232,10 @@ void TodoRow::setItem(const TodoItem &item)
     if (!m_editing)
         m_editor->setText(item.text);
     setAccessibleName(QStringLiteral("待办：%1").arg(item.text));
-    setAccessibleDescription(item.completed ? QStringLiteral("已完成") : QStringLiteral("未完成"));
+    if (m_pomodoroActive)
+        setAccessibleDescription(QStringLiteral("专注中 %1").arg(formatPomodoroClock(m_pomodoroRemaining)));
+    else
+        setAccessibleDescription(item.completed ? QStringLiteral("已完成") : QStringLiteral("未完成"));
     if (item.text.size() > 34 || item.text.contains(QLatin1Char('\n')))
         setToolTip(item.text);
     else
@@ -235,7 +243,30 @@ void TodoRow::setItem(const TodoItem &item)
     updateHeight();
     updateChildGeometry();
     updateDeleteVisibility();
+    updateTimerVisibility();
     update();
+}
+
+void TodoRow::setPomodoro(bool active, int remainingSeconds)
+{
+    remainingSeconds = active ? qMax(0, remainingSeconds) : 0;
+    if (m_pomodoroActive == active && m_pomodoroRemaining == remainingSeconds)
+        return;
+    const bool layoutChanged = (m_pomodoroActive != active);
+    m_pomodoroActive = active;
+    m_pomodoroRemaining = remainingSeconds;
+    if (m_pomodoroChip)
+        m_pomodoroChip->setState(active, m_pomodoroRemaining);
+    if (m_pomodoroActive)
+        setAccessibleDescription(QStringLiteral("专注中 %1").arg(formatPomodoroClock(m_pomodoroRemaining)));
+    else
+        setAccessibleDescription(m_item.completed ? QStringLiteral("已完成") : QStringLiteral("未完成"));
+    if (layoutChanged) {
+        updateTimerVisibility();
+        updateHeight();
+        updateChildGeometry();
+        update();
+    }
 }
 
 QSize TodoRow::sizeHint() const
@@ -251,7 +282,8 @@ QRect TodoRow::checkboxRect() const
 int TodoRow::textWidth() const
 {
     const int chipWidth = m_dateChip ? m_dateChip->sizeHint().width() : 44;
-    const int rightBlock = kDeleteSize + 4 + chipWidth + 8;
+    const int pomoWidth = m_pomodoroChip ? m_pomodoroChip->sizeHint().width() : 24;
+    const int rightBlock = kDeleteSize + 4 + pomoWidth + 4 + chipWidth + 8;
     return qMax(45, width() - kRowTextLeft - kRowSidePadding - rightBlock);
 }
 
@@ -289,12 +321,16 @@ void TodoRow::updateHeight()
 
 void TodoRow::updateChildGeometry()
 {
-    if (!m_dateChip || !m_deleteButton || !m_editor)
+    if (!m_dateChip || !m_deleteButton || !m_editor || !m_pomodoroChip)
         return;
     const int chipWidth = m_dateChip->sizeHint().width();
+    const int pomoWidth = m_pomodoroChip->sizeHint().width();
+    const int pomoHeight = m_pomodoroChip->sizeHint().height();
     const int deleteX = width() - 8 - kDeleteSize;
     m_deleteButton->setGeometry(deleteX, (height() - kDeleteSize) / 2, kDeleteSize, kDeleteSize);
-    const int chipX = deleteX - 4 - chipWidth;
+    const int pomoX = deleteX - 4 - pomoWidth;
+    m_pomodoroChip->setGeometry(pomoX, (height() - pomoHeight) / 2, pomoWidth, pomoHeight);
+    const int chipX = pomoX - 4 - chipWidth;
     m_dateChip->setGeometry(chipX, (height() - m_dateChip->height()) / 2, chipWidth,
                             m_dateChip->height());
     m_editor->setGeometry(kRowTextLeft, (height() - 26) / 2, textWidth(), 26);
@@ -307,13 +343,24 @@ void TodoRow::updateDeleteVisibility()
     m_deleteButton->setVisible(m_hover || hasFocus());
 }
 
+void TodoRow::updateTimerVisibility()
+{
+    if (!m_pomodoroChip)
+        return;
+    m_pomodoroChip->setVisible(m_pomodoroActive || m_hover || hasFocus() || m_editing);
+}
+
 void TodoRow::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    if (m_hover || hasFocus() || m_editing) {
+    if (m_pomodoroActive) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(220, 226, 194, (m_hover || hasFocus() || m_editing) ? 140 : 92));
+        painter.drawRoundedRect(QRectF(rect()).adjusted(2, 3, -2, -3), 9, 9);
+    } else if (m_hover || hasFocus() || m_editing) {
         painter.setPen(Qt::NoPen);
         painter.setBrush(QColor(255, 255, 255, m_editing ? 100 : 56));
         painter.drawRoundedRect(QRectF(rect()).adjusted(2, 3, -2, -3), 9, 9);
@@ -456,6 +503,10 @@ void TodoRow::openContextMenu(const QPoint &globalPos)
                                          QStringLiteral("编辑内容"));
     QAction *dateAction = menu.addAction(makeIcon(AppIcon::Calendar, 14, Theme::InkSoft),
                                          QStringLiteral("更改计划日期"));
+    QAction *pomodoroAction = menu.addAction(
+        makeIcon(AppIcon::Timer, 14, Theme::AccentDark),
+        m_pomodoroActive ? QStringLiteral("停止番茄钟")
+                         : QStringLiteral("开始番茄钟（25 分钟）"));
     menu.addSeparator();
     QAction *toggleAction = menu.addAction(
         makeIcon(AppIcon::Check, 14, Theme::AccentDark),
@@ -471,6 +522,8 @@ void TodoRow::openContextMenu(const QPoint &globalPos)
         startEditing();
     else if (chosen == dateAction)
         emit dateRequested(m_item.id, m_dateChip->mapToGlobal(QPoint(0, m_dateChip->height())));
+    else if (chosen == pomodoroAction)
+        emit pomodoroToggleRequested(m_item.id);
     else if (chosen == toggleAction)
         emit completionRequested(m_item.id, !m_item.completed);
     else if (chosen == deleteAction)
@@ -488,6 +541,7 @@ void TodoRow::startEditing()
     m_editor->selectAll();
     updateChildGeometry();
     updateDeleteVisibility();
+    updateTimerVisibility();
     update();
     emit editingStarted();
 }
@@ -503,6 +557,7 @@ void TodoRow::commitEdit()
     m_editing = false;
     m_editor->hide();
     updateDeleteVisibility();
+    updateTimerVisibility();
     update();
     m_committing = false;
     if (changed)
@@ -516,6 +571,7 @@ void TodoRow::cancelEdit()
     m_editing = false;
     m_editor->hide();
     updateDeleteVisibility();
+    updateTimerVisibility();
     update();
 }
 
@@ -545,6 +601,7 @@ void TodoRow::enterEvent(QEnterEvent *event)
     QWidget::enterEvent(event);
     m_hover = true;
     updateDeleteVisibility();
+    updateTimerVisibility();
     update();
 }
 
@@ -553,6 +610,7 @@ void TodoRow::leaveEvent(QEvent *event)
     QWidget::leaveEvent(event);
     m_hover = false;
     updateDeleteVisibility();
+    updateTimerVisibility();
     update();
 }
 
@@ -560,6 +618,7 @@ void TodoRow::focusInEvent(QFocusEvent *event)
 {
     QWidget::focusInEvent(event);
     updateDeleteVisibility();
+    updateTimerVisibility();
     update();
 }
 
@@ -567,6 +626,7 @@ void TodoRow::focusOutEvent(QFocusEvent *event)
 {
     QWidget::focusOutEvent(event);
     updateDeleteVisibility();
+    updateTimerVisibility();
     update();
 }
 
@@ -689,6 +749,7 @@ GroupSection::GroupSection(const TodoGroup &group, bool expanded, QWidget *paren
         connect(row, &TodoRow::textEdited, this, &GroupSection::textEdited);
         connect(row, &TodoRow::deleteRequested, this, &GroupSection::deleteRequested);
         connect(row, &TodoRow::dateRequested, this, &GroupSection::dateRequested);
+        connect(row, &TodoRow::pomodoroToggleRequested, this, &GroupSection::pomodoroToggleRequested);
         m_contentLayout->addWidget(row);
     }
     root->addWidget(m_content);
@@ -876,7 +937,20 @@ void TodoScrollView::connectSection(GroupSection *section)
     connect(section, &GroupSection::textEdited, this, &TodoScrollView::textEdited);
     connect(section, &GroupSection::deleteRequested, this, &TodoScrollView::deleteRequested);
     connect(section, &GroupSection::dateRequested, this, &TodoScrollView::dateRequested);
+    connect(section, &GroupSection::pomodoroToggleRequested, this,
+            &TodoScrollView::pomodoroToggleRequested);
     connect(section, &GroupSection::expansionChanged, this, &TodoScrollView::groupExpansionChanged);
+}
+
+void TodoScrollView::setPomodoro(const QString &id, int remainingSeconds)
+{
+    if (!m_content)
+        return;
+    const auto rows = m_content->findChildren<TodoRow *>();
+    for (TodoRow *row : rows) {
+        const bool active = !id.isEmpty() && row->itemId() == id;
+        row->setPomodoro(active, active ? remainingSeconds : 0);
+    }
 }
 
 void TodoScrollView::showEmptyState(bool searching)

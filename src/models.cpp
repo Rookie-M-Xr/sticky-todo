@@ -301,3 +301,30 @@ QString relativeDueHint(QDate due, QDate today)
         return QStringLiteral("明天完成 · %1").arg(fullDueLabel(due, today));
     return QStringLiteral("计划 %1 完成").arg(fullDueLabel(due, today));
 }
+
+QString formatPomodoroClock(int remainingSeconds)
+{
+    const int clamped = qMax(0, remainingSeconds);
+    const int minutes = clamped / 60;
+    const int seconds = clamped % 60;
+    return QStringLiteral("%1:%2")
+        .arg(minutes, 2, 10, QChar(u'0'))
+        .arg(seconds, 2, 10, QChar(u'0'));
+}
+
+int pomodoroRemainingSeconds(const QDateTime &deadline, const QDateTime &now)
+{
+    if (!deadline.isValid())
+        return 0;
+    const QDateTime origin = now.isValid() ? now : QDateTime::currentDateTime();
+    return qMax(0, static_cast<int>(origin.secsTo(deadline)));
+}
+
+QString pomodoroAfterToggle(const QString &currentId, const QString &requestedId)
+{
+    if (requestedId.isEmpty())
+        return currentId;
+    if (currentId == requestedId)
+        return QString();
+    return requestedId;
+}

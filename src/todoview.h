@@ -22,6 +22,7 @@ public:
     QString itemId() const { return m_item.id; }
     const TodoItem &item() const { return m_item; }
     void setItem(const TodoItem &item);
+    void setPomodoro(bool active, int remainingSeconds);
     void startEditing();
     bool isEditing() const { return m_editing; }
 
@@ -32,6 +33,7 @@ signals:
     void textEdited(const QString &id, const QString &text);
     void deleteRequested(const QString &id);
     void dateRequested(const QString &id, const QPoint &globalPos);
+    void pomodoroToggleRequested(const QString &id);
     void editingStarted();
 
 protected:
@@ -57,11 +59,15 @@ private:
     void cancelEdit();
     void openContextMenu(const QPoint &globalPos);
     void updateDeleteVisibility();
+    void updateTimerVisibility();
 
     TodoItem m_item;
     QLineEdit *m_editor = nullptr;
     IconButton *m_deleteButton = nullptr;
     DateChip *m_dateChip = nullptr;
+    PomodoroChip *m_pomodoroChip = nullptr;
+    bool m_pomodoroActive = false;
+    int m_pomodoroRemaining = 0;
     int m_lineCount = 1;
     bool m_hover = false;
     bool m_editing = false;
@@ -107,6 +113,7 @@ signals:
     void textEdited(const QString &id, const QString &text);
     void deleteRequested(const QString &id);
     void dateRequested(const QString &id, const QPoint &globalPos);
+    void pomodoroToggleRequested(const QString &id);
     void expansionChanged(GroupId id, bool expanded);
 
 private:
@@ -129,6 +136,7 @@ public:
     explicit TodoScrollView(DataStore *store, QWidget *parent = nullptr);
 
     void refresh(const QVector<TodoGroup> &groups, const QString &search);
+    void setPomodoro(const QString &id, int remainingSeconds);
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
@@ -138,6 +146,7 @@ signals:
     void textEdited(const QString &id, const QString &text);
     void deleteRequested(const QString &id);
     void dateRequested(const QString &id, const QPoint &globalPos);
+    void pomodoroToggleRequested(const QString &id);
     void groupExpansionChanged(GroupId id, bool expanded);
     void clearSearch();
     void composeRequested();
