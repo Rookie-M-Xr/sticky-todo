@@ -29,6 +29,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QPair>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPalette>
@@ -350,6 +351,7 @@ MainWindow::MainWindow(QWidget *parent)
         // Refresh start-hint labels only. A running clock keeps its captured deadline.
         applyPomodoroToView();
     });
+    connect(m_store, &DataStore::remindersChanged, this, &MainWindow::pruneReminderSnoozes);
     connect(m_store, &DataStore::errorOccurred, this, [this](const QString &message) {
         if (m_collapsed)
             expandFromTab(false);
@@ -2728,7 +2730,8 @@ void MainWindow::onReminderTick()
     const QDateTime now = QDateTime::currentDateTime();
     QVector<QString> dueIds;
     for (const ReminderItem &item : m_store->reminders()) {
-        if (reminderIsDue(item, now))
+        const QDateTime snoozeUntil = m_reminderSnoozeUntil.value(item.id);
+        if (reminderIsDue(item, now, snoozeUntil))
             dueIds.append(item.id);
     }
     for (const QString &id : dueIds) {
@@ -2736,13 +2739,14 @@ void MainWindow::onReminderTick()
         if (!item)
             continue;
         const QString text = item->text;
+        m_reminderSnoozeUntil.remove(id);
         if (!m_store->markReminderFired(id, now))
             continue;
-        notifyReminderDue(text);
+        notifyReminderDue(id, text);
     }
 }
 
-void MainWindow::notifyReminderDue(const QString &text)
+void MainWindow::notifyReminderDue(const QString &id, const QString &text)
 {
     const QString label = text.trimmed().isEmpty()
         ? QStringLiteral("定时提醒")
@@ -2752,9 +2756,50 @@ void MainWindow::notifyReminderDue(const QString &text)
         expandFromTab(false);
     if (!isVisible() || isMinimized())
         showAndActivate();
-    showToast(message, QString(), {}, 7000);
+    if (m_snackbar) {
+        stopCollapseCountdown();
+        placeSnackbarOnCard(m_card, m_composerBar, m_snackbar);
+        QVector<QPair<QString, std::function<void()>>> actions;
+        const int presets[] = {kReminderSnoozeMinutes5, kReminderSnoozeMinutes10,
+                               kReminderSnoozeMinutes15};
+        for (int minutes : presets) {
+            actions.append({QStringLiteral("延后 %1").arg(minutes),
+                            [this, id, minutes] { snoozeReminder(id, minutes); }});
+        }
+        m_snackbar->showActions(message, actions, 9000);
+        m_snackbar->raise();
+    }
     if (m_trayInstalled)
         WinUtils::showTrayBalloon(this, QStringLiteral("Sticky Todo"), message);
+}
+
+void MainWindow::snoozeReminder(const QString &id, int minutes)
+{
+    if (!m_store || !reminderSnoozeMinutesValid(minutes))
+        return;
+    const ReminderItem *item = m_store->findReminder(id);
+    if (!item || !item->enabled)
+        return;
+    const QDateTime until = reminderSnoozeUntil(QDateTime::currentDateTime(), minutes);
+    if (!until.isValid())
+        return;
+    m_reminderSnoozeUntil.insert(id, until);
+    showToast(QStringLiteral("已延后 %1 分钟").arg(minutes));
+}
+
+void MainWindow::pruneReminderSnoozes()
+{
+    if (!m_store) {
+        m_reminderSnoozeUntil.clear();
+        return;
+    }
+    for (auto it = m_reminderSnoozeUntil.begin(); it != m_reminderSnoozeUntil.end(); ) {
+        const ReminderItem *item = m_store->findReminder(it.key());
+        if (!item || !item->enabled)
+            it = m_reminderSnoozeUntil.erase(it);
+        else
+            ++it;
+    }
 }
 
 void MainWindow::handleGroupExpansion(GroupId id, bool expanded)

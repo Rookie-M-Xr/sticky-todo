@@ -6,6 +6,7 @@
 #include <QByteArray>
 #include <QDate>
 #include <QDateTime>
+#include <QHash>
 #include <QImage>
 #include <QPoint>
 #include <QRect>
@@ -140,7 +141,9 @@ private:
     void notifyPomodoroFinished(const QString &text, int minutes);
     int pomodoroSecondsLeft() const;
     void onReminderTick();
-    void notifyReminderDue(const QString &text);
+    void notifyReminderDue(const QString &id, const QString &text);
+    void snoozeReminder(const QString &id, int minutes);
+    void pruneReminderSnoozes();
     void handleGroupExpansion(GroupId id, bool expanded);
     void handleSearchChanged(const QString &text);
     void runSearch();
@@ -190,6 +193,8 @@ private:
     QDateTime m_pomodoroDeadline;
     int m_pomodoroSessionMinutes = kPomodoroDefaultMinutes;
     QTimer *m_reminderTick = nullptr;
+    // In-process only (TR #51): next-fire override. Not persisted.
+    QHash<QString, QDateTime> m_reminderSnoozeUntil;
 
     QDate m_currentDate;
     QString m_searchQuery;

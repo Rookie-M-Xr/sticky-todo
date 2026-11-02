@@ -36,9 +36,10 @@ struct DailySnapshot {
     static DailySnapshot fromJson(const QJsonObject &object, bool *ok = nullptr);
 };
 
-// Interval reminders (TR #19 + #42 + #50). Own file reminders.json — never a TodoItem field.
+// Interval reminders (TR #19 + #42 + #50 + #51). Own file reminders.json — never a TodoItem field.
 // Local-clock window: same-day [start, end) when start < end;
 // cross-midnight [start, 24:00) ∪ [00:00, end) when end <= start.
+// In-process snooze (TR #51) only shifts the next fire; never written to JSON.
 constexpr int kReminderMinMinutes = 1;
 constexpr int kReminderMaxMinutes = 7 * 24 * 60;
 constexpr int kReminderMaxText = 200;
@@ -46,6 +47,9 @@ constexpr int kReminderMaxCount = 20;
 constexpr int kReminderDayMinutes = 24 * 60;
 constexpr int kReminderDefaultStartMinutes = 9 * 60;
 constexpr int kReminderDefaultEndMinutes = 18 * 60;
+constexpr int kReminderSnoozeMinutes5 = 5;
+constexpr int kReminderSnoozeMinutes10 = 10;
+constexpr int kReminderSnoozeMinutes15 = 15;
 
 struct ReminderItem {
     QString id;
@@ -71,8 +75,13 @@ bool reminderWindowValid(int startMinutes, int endMinutes);
 int reminderTimeToMinutes(const QTime &time);
 bool reminderInActiveWindow(const ReminderItem &item, const QDateTime &now = QDateTime());
 QDateTime reminderAnchor(const ReminderItem &item);
-QDateTime reminderNextDue(const ReminderItem &item);
-bool reminderIsDue(const ReminderItem &item, const QDateTime &now = QDateTime());
+// snoozeUntil, when valid, replaces lastFired+interval for this next fire only.
+QDateTime reminderNextDue(const ReminderItem &item,
+                          const QDateTime &snoozeUntil = QDateTime());
+bool reminderIsDue(const ReminderItem &item, const QDateTime &now = QDateTime(),
+                   const QDateTime &snoozeUntil = QDateTime());
+bool reminderSnoozeMinutesValid(int minutes);
+QDateTime reminderSnoozeUntil(const QDateTime &from, int minutes);
 
 enum class ReportKind {
     Daily,

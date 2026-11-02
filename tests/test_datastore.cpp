@@ -1256,6 +1256,77 @@ void testReminderHelpers()
         pass("reminder helpers (due / disable / json)");
 }
 
+void testReminderSnooze()
+{
+    const int before = g_failed;
+    expect(reminderSnoozeMinutesValid(kReminderSnoozeMinutes5), "snooze: 5 valid");
+    expect(reminderSnoozeMinutesValid(kReminderSnoozeMinutes10), "snooze: 10 valid");
+    expect(reminderSnoozeMinutesValid(kReminderSnoozeMinutes15), "snooze: 15 valid");
+    expect(!reminderSnoozeMinutesValid(1), "snooze: 1 not a preset");
+    expect(!reminderSnoozeMinutesValid(7), "snooze: custom rejected");
+    expect(!reminderSnoozeMinutesValid(0), "snooze: 0 rejected");
+    expect(!reminderSnoozeMinutesValid(20), "snooze: 20 rejected");
+
+    ReminderItem item;
+    item.text = QStringLiteral("喝水");
+    item.intervalMinutes = 60;
+    item.enabled = true;
+    const QDateTime t0(QDate(2026, 11, 2), QTime(12, 0, 0));
+    item.createdAt = t0;
+    item.lastFiredAt = t0;
+
+    expect(!reminderSnoozeUntil(t0, 7).isValid(), "snooze: invalid preset empty");
+    const QDateTime snooze5 = reminderSnoozeUntil(t0, kReminderSnoozeMinutes5);
+    const QDateTime snooze10 = reminderSnoozeUntil(t0, kReminderSnoozeMinutes10);
+    const QDateTime snooze15 = reminderSnoozeUntil(t0, kReminderSnoozeMinutes15);
+    expect(snooze5 == t0.addSecs(5 * 60), "snooze: +5 min");
+    expect(snooze10 == t0.addSecs(10 * 60), "snooze: +10 min");
+    expect(snooze15 == t0.addSecs(15 * 60), "snooze: +15 min");
+    expect(reminderNextDue(item) == t0.addSecs(3600), "snooze: regular next unchanged");
+    expect(item.intervalMinutes == 60, "snooze: interval field untouched");
+    expect(reminderNextDue(item, snooze5) == snooze5, "snooze: next due is override");
+    expect(!reminderIsDue(item, t0.addSecs(4 * 60), snooze5), "snooze: quiet at +4");
+    expect(reminderIsDue(item, t0.addSecs(5 * 60), snooze5), "snooze: due at +5");
+    expect(!reminderIsDue(item, t0.addSecs(5 * 60)), "snooze: no override keeps interval");
+    expect(!reminderIsDue(item, t0.addSecs(9 * 60), snooze10), "snooze: 10min quiet at +9");
+    expect(reminderIsDue(item, t0.addSecs(10 * 60), snooze10), "snooze: 10min due at +10");
+
+    item.intervalMinutes = 1;
+    expect(reminderIsDue(item, t0.addSecs(60)), "snooze: 1min interval due without override");
+    expect(!reminderIsDue(item, t0.addSecs(60), snooze5), "snooze: suppress short interval");
+    expect(reminderIsDue(item, t0.addSecs(5 * 60), snooze5), "snooze: short interval fires at snooze");
+    item.intervalMinutes = 60;
+    expect(!reminderIsDue(item, t0.addSecs(5 * 60)), "snooze: after clear uses lastFired+interval");
+    expect(reminderIsDue(item, t0.addSecs(60 * 60)), "snooze: original interval after clear");
+
+    item.enabled = false;
+    expect(!reminderIsDue(item, t0.addSecs(5 * 60), snooze5), "snooze: disabled never due");
+    item.enabled = true;
+    item.text.clear();
+    expect(!reminderIsDue(item, t0.addSecs(5 * 60), snooze5), "snooze: deleted/empty text silent");
+    item.text = QStringLiteral("喝水");
+
+    item.activeStartMinutes = 9 * 60;
+    item.activeEndMinutes = 18 * 60;
+    const QDateTime evening(QDate(2026, 11, 2), QTime(20, 0));
+    item.lastFiredAt = evening.addSecs(-3600);
+    const QDateTime snoozeEve = reminderSnoozeUntil(evening, kReminderSnoozeMinutes5);
+    expect(!reminderIsDue(item, evening.addSecs(5 * 60), snoozeEve),
+           "snooze: outside window still silent");
+    const QDateTime morning(QDate(2026, 11, 3), QTime(9, 0));
+    expect(reminderIsDue(item, morning, snoozeEve), "snooze: fires when window opens");
+    expect(item.intervalMinutes == 60, "snooze: interval still 60");
+    expect(item.activeStartMinutes == 9 * 60 && item.activeEndMinutes == 18 * 60,
+           "snooze: window fields untouched");
+
+    const QJsonObject json = item.toJson();
+    expect(!json.contains(QStringLiteral("snoozeUntil")), "snooze: not serialized");
+    expect(json.value(QStringLiteral("intervalMinutes")).toInt() == 60, "snooze: json interval same");
+
+    if (g_failed == before)
+        pass("reminder in-process snooze (5/10/15, disable, window)");
+}
+
 void testReminderStorePersistAndDisable()
 {
     const int before = g_failed;
@@ -1761,6 +1832,7 @@ int main(int argc, char *argv[])
     testPomodoroStatsCorruptionRecovery();
     testPomodoroStatsClear();
     testReminderHelpers();
+    testReminderSnooze();
     testReminderStorePersistAndDisable();
     testReminderDueThenMarkFired();
     testReminderCorruptionRecovery();
