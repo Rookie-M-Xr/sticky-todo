@@ -21,6 +21,10 @@ inline const QColor AccentSoft(220, 226, 194);
 inline const QColor Danger(188, 103, 79);
 inline const QColor DangerSoft(237, 205, 184);
 inline const QColor White(255, 255, 255);
+// QToolTip / QTipLabel — Inactive group (tips are not active windows).
+inline const QColor ToolTipFill(255, 253, 243); // #fffdf3
+inline const QColor ToolTipInk(77, 72, 58);     // #4d483a
+constexpr int ToolTipRadius = 5;
 
 QString uiFamily();
 QString displayFamily();

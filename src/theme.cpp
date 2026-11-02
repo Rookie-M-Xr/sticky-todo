@@ -3,6 +3,7 @@
 
 #include <QApplication>
 #include <QBitmap>
+#include <QDynamicPropertyChangeEvent>
 #include <QEvent>
 #include <QFontDatabase>
 #include <QImage>
@@ -10,6 +11,7 @@
 #include <QRegion>
 #include <QStringList>
 #include <QStyleHints>
+#include <QTimer>
 #include <QToolTip>
 #include <QTransform>
 #include <QWidget>
@@ -29,6 +31,7 @@ QString firstAvailable(const QStringList &candidates)
 }
 
 constexpr int kMenuRadius = 12;
+constexpr int kTipRadius = Theme::ToolTipRadius;
 const QColor kMenuFill(255, 253, 244); // #fffdf4
 
 } // namespace
@@ -73,8 +76,8 @@ QPalette applicationPalette()
 {
     QPalette palette;
     const QColor window(255, 253, 244);      // #fffdf4 — QMenu fill
-    const QColor tipBase(255, 253, 243);     // #fffdf3 — QToolTip fill
-    const QColor tipText(77, 72, 58);        // #4d483a
+    const QColor tipBase = ToolTipFill;      // #fffdf3 — QToolTip fill
+    const QColor tipText = ToolTipInk;       // #4d483a
     const QColor selected(242, 231, 198);    // #f2e7c6
     const QColor selectedText(54, 51, 40);   // #363328
 
@@ -155,11 +158,11 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
 QScrollBar:horizontal {
     height: 0;
 }
-QToolTip {
+QToolTip, QTipLabel {
     background: #fffdf3;
     color: #4d483a;
     border: 1px solid #e2d5b3;
-    border-radius: 5px;
+    border-radius: %2px;
     padding: 5px 8px;
     opacity: 255;
 }
@@ -191,7 +194,7 @@ QMenu::separator {
 QMenu::icon {
     padding-left: 6px;
 }
-)").arg(kMenuRadius);
+)").arg(kMenuRadius).arg(kTipRadius);
 }
 
 } // namespace Theme
@@ -202,8 +205,8 @@ void polishPopupWidget(QWidget *widget)
 {
     if (!widget)
         return;
-    // The paper window sets Window to transparent. QMenu / QTipLabel parented
-    // there inherit that role (or the OS dark palette) and paint black.
+    // The paper window sets Window to transparent. QMenu / QMessageBox
+    // parented there inherit that role (or the OS dark palette) and paint black.
     const QPalette paper = Theme::applicationPalette();
     const QColor want = paper.color(QPalette::Window);
     const QColor have = widget->palette().color(QPalette::Window);
@@ -311,6 +314,88 @@ void polishMenuShape(QWidget *menu)
     WinUtils::prepareRoundedPopup(menu);
 }
 
+bool tipPaletteMatches(const QPalette &have, const QPalette &want)
+{
+    const QColor wantBase = want.color(QPalette::Inactive, QPalette::ToolTipBase);
+    const QColor wantText = want.color(QPalette::Inactive, QPalette::ToolTipText);
+    const QColor wantWindow = want.color(QPalette::Window);
+    auto same = [&](QPalette::ColorGroup group, QPalette::ColorRole role, const QColor &expected) {
+        const QColor color = have.color(group, role);
+        return color == expected && color.alpha() == 255;
+    };
+    for (const QPalette::ColorGroup group : {QPalette::Active, QPalette::Inactive, QPalette::Disabled}) {
+        if (!same(group, QPalette::ToolTipBase, wantBase)
+            || !same(group, QPalette::ToolTipText, wantText)
+            || !same(group, QPalette::Window, wantWindow))
+            return false;
+    }
+    return true;
+}
+
+QString tipStyleSheet()
+{
+    return QStringLiteral(
+        "QTipLabel { background: #fffdf3; color: #4d483a; "
+        "border: 1px solid #e2d5b3; border-radius: %1px; padding: 5px 8px; }")
+        .arg(kTipRadius);
+}
+
+void polishTipWindow(QWidget *tip, bool allowStyleSheet)
+{
+    if (!tip)
+        return;
+    static bool busy = false;
+    if (busy)
+        return;
+    busy = true;
+    const QPalette paper = Theme::applicationPalette();
+    if (!tipPaletteMatches(tip->palette(), paper))
+        tip->setPalette(paper);
+    if (!tipPaletteMatches(QToolTip::palette(), paper))
+        QToolTip::setPalette(paper);
+    tip->setForegroundRole(QPalette::ToolTipText);
+    tip->setBackgroundRole(QPalette::ToolTipBase);
+    // Reuse (tomato → delete) calls placeTip → setStyleSheet("/* */") and
+    // can drop palette / translucent bits. Pin chrome again. Do not change
+    // window flags here: QTipLabel constructs under Polish and setWindowFlags
+    // would recreate the HWND mid-constructor.
+    tip->setAttribute(Qt::WA_TranslucentBackground, false);
+    tip->setAttribute(Qt::WA_NoSystemBackground, false);
+    tip->setAutoFillBackground(true);
+    tip->setAttribute(Qt::WA_StyledBackground, true);
+    if (allowStyleSheet && tip->styleSheet() != tipStyleSheet())
+        tip->setStyleSheet(tipStyleSheet());
+    busy = false;
+}
+
+void applyTipRoundedMask(QWidget *tip)
+{
+    const QSize size = tip->size();
+    if (size.width() < 4 || size.height() < 4)
+        return;
+    QRegion mask = rasterRoundedMask(size, kTipRadius, tip->devicePixelRatioF());
+    mask &= roundedRectRegion(size, kTipRadius);
+    tip->setMask(mask);
+    // Creating a native handle during QTipLabel's constructor Polish/Resize
+    // crashes some QPA backends; only touch DWM once the window exists.
+    if (tip->windowHandle())
+        WinUtils::prepareRoundedPopup(tip);
+}
+
+void scheduleTipShape(QWidget *tip)
+{
+    // QTipLabel::resizeEvent applies SH_ToolTip_Mask after app filters,
+    // which is square once the reuse path has cleared QSS cache.
+    if (tip->property("_st_tip_mask_queued").toBool())
+        return;
+    tip->setProperty("_st_tip_mask_queued", true);
+    QTimer::singleShot(0, tip, [tip] {
+        tip->setProperty("_st_tip_mask_queued", false);
+        if (tip->inherits("QTipLabel"))
+            applyTipRoundedMask(tip);
+    });
+}
+
 class PopupChromeFilter final : public QObject
 {
 public:
@@ -335,9 +420,24 @@ protected:
                 paintMenuPaper(widget);
             return false;
         }
+        if (widget->inherits("QTipLabel")) {
+            bool restyle = type == QEvent::Polish || type == QEvent::Show
+                || type == QEvent::StyleChange || type == QEvent::PaletteChange;
+            if (type == QEvent::DynamicPropertyChange) {
+                const auto *change = static_cast<const QDynamicPropertyChangeEvent *>(event);
+                restyle = change->propertyName() == "_q_stylesheet_parent";
+            }
+            if (restyle)
+                polishTipWindow(widget, type != QEvent::Polish);
+            if (type == QEvent::Show || type == QEvent::Resize || type == QEvent::StyleChange) {
+                applyTipRoundedMask(widget);
+                scheduleTipShape(widget);
+            }
+            return false;
+        }
         if (type != QEvent::Polish && type != QEvent::Show)
             return false;
-        if (widget->inherits("QTipLabel") || widget->inherits("QMessageBox"))
+        if (widget->inherits("QMessageBox"))
             polishPopupWidget(widget);
         return false;
     }
