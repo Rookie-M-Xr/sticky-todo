@@ -135,9 +135,10 @@ class PomodoroChip : public QAbstractButton
 public:
     explicit PomodoroChip(QWidget *parent = nullptr);
 
-    void setState(bool active, int remainingSeconds);
+    void setState(bool active, int remainingSeconds, bool paused = false);
     void setDefaultMinutes(int minutes);
     bool isActive() const { return m_active; }
+    bool isPaused() const { return m_paused; }
     QSize sizeHint() const override;
 
 protected:
@@ -149,6 +150,7 @@ private:
     void refreshTip();
 
     bool m_active = false;
+    bool m_paused = false;
     int m_remaining = 0;
     int m_defaultMinutes = kPomodoroDefaultMinutes;
     bool m_hover = false;

@@ -232,7 +232,9 @@ void TodoRow::setItem(const TodoItem &item)
     if (!m_editing)
         m_editor->setText(item.text);
     setAccessibleName(QStringLiteral("待办：%1").arg(item.text));
-    if (m_pomodoroActive)
+    if (m_pomodoroActive && m_pomodoroPaused)
+        setAccessibleDescription(QStringLiteral("已暂停 %1").arg(formatPomodoroClock(m_pomodoroRemaining)));
+    else if (m_pomodoroActive)
         setAccessibleDescription(QStringLiteral("专注中 %1").arg(formatPomodoroClock(m_pomodoroRemaining)));
     else
         setAccessibleDescription(item.completed ? QStringLiteral("已完成") : QStringLiteral("未完成"));
@@ -257,17 +259,23 @@ void TodoRow::setPomodoroDefaultMinutes(int minutes)
         m_pomodoroChip->setDefaultMinutes(m_pomodoroDefaultMinutes);
 }
 
-void TodoRow::setPomodoro(bool active, int remainingSeconds)
+void TodoRow::setPomodoro(bool active, int remainingSeconds, bool paused)
 {
     remainingSeconds = active ? qMax(0, remainingSeconds) : 0;
-    if (m_pomodoroActive == active && m_pomodoroRemaining == remainingSeconds)
+    if (!active)
+        paused = false;
+    if (m_pomodoroActive == active && m_pomodoroRemaining == remainingSeconds
+        && m_pomodoroPaused == paused)
         return;
     const bool layoutChanged = (m_pomodoroActive != active);
     m_pomodoroActive = active;
+    m_pomodoroPaused = paused;
     m_pomodoroRemaining = remainingSeconds;
     if (m_pomodoroChip)
-        m_pomodoroChip->setState(active, m_pomodoroRemaining);
-    if (m_pomodoroActive)
+        m_pomodoroChip->setState(active, m_pomodoroRemaining, m_pomodoroPaused);
+    if (m_pomodoroActive && m_pomodoroPaused)
+        setAccessibleDescription(QStringLiteral("已暂停 %1").arg(formatPomodoroClock(m_pomodoroRemaining)));
+    else if (m_pomodoroActive)
         setAccessibleDescription(QStringLiteral("专注中 %1").arg(formatPomodoroClock(m_pomodoroRemaining)));
     else
         setAccessibleDescription(m_item.completed ? QStringLiteral("已完成") : QStringLiteral("未完成"));
@@ -275,6 +283,8 @@ void TodoRow::setPomodoro(bool active, int remainingSeconds)
         updateTimerVisibility();
         updateHeight();
         updateChildGeometry();
+        update();
+    } else {
         update();
     }
 }
@@ -513,10 +523,18 @@ void TodoRow::openContextMenu(const QPoint &globalPos)
                                          QStringLiteral("编辑内容"));
     QAction *dateAction = menu.addAction(makeIcon(AppIcon::Calendar, 14, Theme::InkSoft),
                                          QStringLiteral("更改计划日期"));
-    QAction *pomodoroAction = menu.addAction(
-        makeIcon(AppIcon::Timer, 14, Theme::AccentDark),
-        m_pomodoroActive ? QStringLiteral("停止番茄钟")
-                         : formatPomodoroStartHint(m_pomodoroDefaultMinutes));
+    QAction *pomodoroToggleAction = nullptr;
+    QAction *pomodoroStopAction = nullptr;
+    if (m_pomodoroActive) {
+        pomodoroToggleAction = menu.addAction(
+            makeIcon(AppIcon::Timer, 14, Theme::AccentDark),
+            m_pomodoroPaused ? QStringLiteral("继续番茄钟") : QStringLiteral("暂停番茄钟"));
+        pomodoroStopAction = menu.addAction(makeIcon(AppIcon::Timer, 14, Theme::AccentDark),
+                                            QStringLiteral("停止番茄钟"));
+    } else {
+        pomodoroToggleAction = menu.addAction(makeIcon(AppIcon::Timer, 14, Theme::AccentDark),
+                                              formatPomodoroStartHint(m_pomodoroDefaultMinutes));
+    }
     menu.addSeparator();
     QAction *toggleAction = menu.addAction(
         makeIcon(AppIcon::Check, 14, Theme::AccentDark),
@@ -534,8 +552,10 @@ void TodoRow::openContextMenu(const QPoint &globalPos)
         startEditing();
     else if (chosen == dateAction)
         emit dateRequested(m_item.id, m_dateChip->mapToGlobal(QPoint(0, m_dateChip->height())));
-    else if (chosen == pomodoroAction)
+    else if (chosen == pomodoroToggleAction)
         emit pomodoroToggleRequested(m_item.id);
+    else if (chosen == pomodoroStopAction)
+        emit pomodoroStopRequested(m_item.id);
     else if (chosen == toggleAction)
         emit completionRequested(m_item.id, !m_item.completed);
     else if (chosen == archiveAction)
@@ -764,6 +784,7 @@ GroupSection::GroupSection(const TodoGroup &group, bool expanded, QWidget *paren
         connect(row, &TodoRow::deleteRequested, this, &GroupSection::deleteRequested);
         connect(row, &TodoRow::dateRequested, this, &GroupSection::dateRequested);
         connect(row, &TodoRow::pomodoroToggleRequested, this, &GroupSection::pomodoroToggleRequested);
+        connect(row, &TodoRow::pomodoroStopRequested, this, &GroupSection::pomodoroStopRequested);
         connect(row, &TodoRow::archiveRequested, this, &GroupSection::archiveRequested);
         m_contentLayout->addWidget(row);
     }
@@ -954,11 +975,13 @@ void TodoScrollView::connectSection(GroupSection *section)
     connect(section, &GroupSection::dateRequested, this, &TodoScrollView::dateRequested);
     connect(section, &GroupSection::pomodoroToggleRequested, this,
             &TodoScrollView::pomodoroToggleRequested);
+    connect(section, &GroupSection::pomodoroStopRequested, this,
+            &TodoScrollView::pomodoroStopRequested);
     connect(section, &GroupSection::archiveRequested, this, &TodoScrollView::archiveRequested);
     connect(section, &GroupSection::expansionChanged, this, &TodoScrollView::groupExpansionChanged);
 }
 
-void TodoScrollView::setPomodoro(const QString &id, int remainingSeconds)
+void TodoScrollView::setPomodoro(const QString &id, int remainingSeconds, bool paused)
 {
     if (!m_content)
         return;
@@ -966,7 +989,7 @@ void TodoScrollView::setPomodoro(const QString &id, int remainingSeconds)
     for (TodoRow *row : rows) {
         row->setPomodoroDefaultMinutes(m_pomodoroDefaultMinutes);
         const bool active = !id.isEmpty() && row->itemId() == id;
-        row->setPomodoro(active, active ? remainingSeconds : 0);
+        row->setPomodoro(active, active ? remainingSeconds : 0, active && paused);
     }
 }
 
