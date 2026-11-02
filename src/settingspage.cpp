@@ -347,7 +347,7 @@ QWidget *SettingsPage::buildRemindersCard()
         edit->setWrapping(false);
         edit->setFixedWidth(78);
         edit->setFocusPolicy(Qt::ClickFocus);
-        edit->setToolTip(QStringLiteral("仅当日时段；结束时刻不含。不支持 22:00–06:00 跨午夜。"));
+        edit->setToolTip(QStringLiteral("结束时刻不含。结束≤开始即跨午夜（如 22:00–06:00）。"));
         edit->setStyleSheet(spinStyle);
         return edit;
     };
@@ -363,7 +363,7 @@ QWidget *SettingsPage::buildRemindersCard()
     windowLayout->addWidget(m_reminderEnd);
 
     auto *windowRow = new SettingRow(QStringLiteral("生效时段"),
-                                     QStringLiteral("仅当日 [开始, 结束)，不支持跨午夜"),
+                                     QStringLiteral("[开始, 结束)；结束≤开始为跨午夜"),
                                      windowBox, card);
     body->addWidget(windowRow);
 
@@ -407,7 +407,7 @@ QWidget *SettingsPage::buildRemindersCard()
     m_reminderListLayout->setSpacing(0);
     body->addWidget(m_reminderList);
 
-    m_reminderEmpty = new QLabel(QStringLiteral("还没有提醒。填当日时段、间隔和文案后点添加。"), card);
+    m_reminderEmpty = new QLabel(QStringLiteral("还没有提醒。填时段、间隔和文案后点添加。"), card);
     m_reminderEmpty->setFont(Theme::uiFont(10));
     m_reminderEmpty->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(Theme::Muted.name()));
     m_reminderEmpty->setWordWrap(true);
@@ -513,7 +513,7 @@ void SettingsPage::submitNewReminder()
     const int startMinutes = reminderTimeToMinutes(m_reminderStart->time());
     const int endMinutes = reminderTimeToMinutes(m_reminderEnd->time());
     if (!reminderWindowValid(startMinutes, endMinutes)) {
-        emit messageRequested(QStringLiteral("仅支持当日时段，结束须晚于开始"));
+        emit messageRequested(QStringLiteral("时段无效"));
         return;
     }
     const QString id = m_store->addReminder(text, m_reminderInterval->value(),
