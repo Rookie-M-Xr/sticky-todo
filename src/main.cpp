@@ -24,7 +24,7 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("Sticky Todo"));
     app.setApplicationDisplayName(QStringLiteral("Sticky Todo"));
     app.setOrganizationName(QStringLiteral("StickyTodo"));
-    app.setApplicationVersion(QStringLiteral("0.1.3"));
+    app.setApplicationVersion(QStringLiteral("0.1.4"));
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/app.png")));
     app.setStyle(QStringLiteral("Fusion"));
     app.setFont(Theme::uiFont(13));
