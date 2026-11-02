@@ -153,7 +153,7 @@ Sticky Todo **v0.1.5** 修复了番茄钟悬停后其它按钮提示变成黑底
 | 角色 | 职责 |
 |------|------|
 | 小皮 | 定版本号与范围、发版节奏（点数约数）；发版拍板；可拒发（含拒发「只有 TR 列表」的正文、未达节奏门槛且非热修） |
-| 劳模 | 对版本、CHANGELOG、**用户向 Release 正文**、tag（含远程）、双端包、GitHub Release |
+| 劳模 | 对版本、CHANGELOG、**用户向 Release 正文**、tag（含远程）、双端包、GitHub Release；短刀 squash 进 `dev-cursor` 后删 origin 短刀分支 |
 | 小测 | 对发布资产做解压冒烟，频道 PASS/FAIL |
 | 小开 | 薄文档（本约定 / README 节）diff，交劳模审推 |
 

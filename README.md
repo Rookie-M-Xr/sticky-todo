@@ -125,6 +125,10 @@ $env:STICKY_TODO_DATA_DIR = "$PWD\testdata"
 - `docs: README 去掉本机绝对路径`
 - `chore: 构建脚本改为仅使用环境变量`
 
+## 远程分支
+
+远程长期只留 **`master`** 与 **`dev-cursor`**。短刀（`cursor/…`）合入 `dev-cursor`（squash）后必须从 origin 删除；禁止堆积过期短刀。发版走 `master`，不把短刀直接合进 `master`。
+
 ## Issue 标签
 
 开源协作用 GitHub Issue。标签分三类，可并存；**优先级只挂一个 P**：
