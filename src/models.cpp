@@ -302,6 +302,96 @@ QString relativeDueHint(QDate due, QDate today)
     return QStringLiteral("计划 %1 完成").arg(fullDueLabel(due, today));
 }
 
+int clampReminderInterval(int minutes)
+{
+    return qBound(kReminderMinMinutes, minutes, kReminderMaxMinutes);
+}
+
+QString formatReminderInterval(int minutes)
+{
+    const int n = clampReminderInterval(minutes);
+    if (n % 60 == 0)
+        return QStringLiteral("每 %1 小时").arg(n / 60);
+    return QStringLiteral("每 %1 分钟").arg(n);
+}
+
+QDateTime reminderAnchor(const ReminderItem &item)
+{
+    if (item.lastFiredAt.isValid())
+        return item.lastFiredAt;
+    if (item.createdAt.isValid())
+        return item.createdAt;
+    return {};
+}
+
+QDateTime reminderNextDue(const ReminderItem &item)
+{
+    const QDateTime anchor = reminderAnchor(item);
+    if (!anchor.isValid())
+        return {};
+    return anchor.addSecs(static_cast<qint64>(clampReminderInterval(item.intervalMinutes)) * 60);
+}
+
+bool reminderIsDue(const ReminderItem &item, const QDateTime &now)
+{
+    if (!item.enabled || item.text.trimmed().isEmpty())
+        return false;
+    const QDateTime due = reminderNextDue(item);
+    if (!due.isValid())
+        return false;
+    const QDateTime origin = now.isValid() ? now : QDateTime::currentDateTime();
+    return due <= origin;
+}
+
+QJsonObject ReminderItem::toJson() const
+{
+    QJsonObject object;
+    object.insert(QStringLiteral("id"), id);
+    object.insert(QStringLiteral("text"), text);
+    object.insert(QStringLiteral("intervalMinutes"), intervalMinutes);
+    object.insert(QStringLiteral("enabled"), enabled);
+    object.insert(QStringLiteral("lastFiredAt"),
+                  lastFiredAt.isValid() ? lastFiredAt.toString(Qt::ISODateWithMs) : QString());
+    object.insert(QStringLiteral("createdAt"), createdAt.toString(Qt::ISODateWithMs));
+    object.insert(QStringLiteral("updatedAt"), updatedAt.toString(Qt::ISODateWithMs));
+    return object;
+}
+
+ReminderItem ReminderItem::fromJson(const QJsonObject &object, bool *ok)
+{
+    ReminderItem item;
+    bool valid = true;
+    item.id = object.value(QStringLiteral("id")).toString().trimmed();
+    if (item.id.isEmpty())
+        item.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    item.text = object.value(QStringLiteral("text")).toString().trimmed();
+    if (item.text.isEmpty())
+        valid = false;
+    if (item.text.size() > kReminderMaxText)
+        item.text = item.text.left(kReminderMaxText);
+
+    const QJsonValue intervalValue = object.value(QStringLiteral("intervalMinutes"));
+    const int rawInterval = intervalValue.toInt(0);
+    if (!intervalValue.isDouble() || rawInterval < kReminderMinMinutes
+        || rawInterval > kReminderMaxMinutes) {
+        valid = false;
+    }
+    item.intervalMinutes = clampReminderInterval(rawInterval > 0 ? rawInterval : 60);
+    item.enabled = object.value(QStringLiteral("enabled")).toBool(true);
+
+    item.createdAt = parseDateTime(object.value(QStringLiteral("createdAt")).toString());
+    if (!item.createdAt.isValid())
+        item.createdAt = QDateTime::currentDateTime();
+    item.updatedAt = parseDateTime(object.value(QStringLiteral("updatedAt")).toString(), item.createdAt);
+    item.lastFiredAt = parseDateTime(object.value(QStringLiteral("lastFiredAt")).toString());
+    if (!item.lastFiredAt.isValid())
+        item.lastFiredAt = item.createdAt;
+
+    if (ok)
+        *ok = valid;
+    return item;
+}
+
 QString formatPomodoroClock(int remainingSeconds)
 {
     const int clamped = qMax(0, remainingSeconds);

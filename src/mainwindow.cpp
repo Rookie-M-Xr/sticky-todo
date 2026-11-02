@@ -433,6 +433,12 @@ MainWindow::MainWindow(QWidget *parent)
         });
     }
 
+    m_reminderTick = new QTimer(this);
+    m_reminderTick->setInterval(5000);
+    connect(m_reminderTick, &QTimer::timeout, this, &MainWindow::onReminderTick);
+    m_reminderTick->start();
+    QTimer::singleShot(0, this, &MainWindow::onReminderTick);
+
     m_refreshTimer->start(0);
     updateHeader();
     updateTrayState();
@@ -2667,6 +2673,42 @@ void MainWindow::notifyPomodoroFinished(const QString &text)
         ? QStringLiteral("这条待办")
         : elidedOneLine(text, 28, Theme::uiFont(12));
     const QString message = QStringLiteral("「%1」的 25 分钟到了").arg(label);
+    if (m_collapsed)
+        expandFromTab(false);
+    if (!isVisible() || isMinimized())
+        showAndActivate();
+    showToast(message, QString(), {}, 7000);
+    if (m_trayInstalled)
+        WinUtils::showTrayBalloon(this, QStringLiteral("Sticky Todo"), message);
+}
+
+void MainWindow::onReminderTick()
+{
+    if (!m_store)
+        return;
+    const QDateTime now = QDateTime::currentDateTime();
+    QVector<QString> dueIds;
+    for (const ReminderItem &item : m_store->reminders()) {
+        if (reminderIsDue(item, now))
+            dueIds.append(item.id);
+    }
+    for (const QString &id : dueIds) {
+        const ReminderItem *item = m_store->findReminder(id);
+        if (!item)
+            continue;
+        const QString text = item->text;
+        if (!m_store->markReminderFired(id, now))
+            continue;
+        notifyReminderDue(text);
+    }
+}
+
+void MainWindow::notifyReminderDue(const QString &text)
+{
+    const QString label = text.trimmed().isEmpty()
+        ? QStringLiteral("定时提醒")
+        : elidedOneLine(text, 28, Theme::uiFont(12));
+    const QString message = QStringLiteral("提醒：%1").arg(label);
     if (m_collapsed)
         expandFromTab(false);
     if (!isVisible() || isMinimized())

@@ -13,6 +13,7 @@
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPushButton>
@@ -174,6 +175,7 @@ SettingsPage::SettingsPage(DataStore *store, QWidget *parent)
     buildUi();
     refresh();
     connect(m_store, &DataStore::settingsChanged, this, &SettingsPage::refresh);
+    connect(m_store, &DataStore::remindersChanged, this, &SettingsPage::rebuildReminderRows);
 }
 
 void SettingsPage::buildUi()
@@ -205,6 +207,8 @@ void SettingsPage::buildUi()
 
     m_contentLayout->addWidget(sectionLabel(QStringLiteral("外观与行为"), m_content));
     m_contentLayout->addWidget(buildGeneralCard());
+    m_contentLayout->addWidget(sectionLabel(QStringLiteral("定时提醒"), m_content));
+    m_contentLayout->addWidget(buildRemindersCard());
     m_contentLayout->addWidget(sectionLabel(QStringLiteral("汇报"), m_content));
     m_contentLayout->addWidget(buildReportsCard());
     m_contentLayout->addWidget(sectionLabel(QStringLiteral("窗口"), m_content));
@@ -299,6 +303,157 @@ QWidget *SettingsPage::buildGeneralCard()
         emit hotkeyChangeRequested(QString());
     });
     return card;
+}
+
+QWidget *SettingsPage::buildRemindersCard()
+{
+    auto *card = new SettingsCard;
+    auto *body = card->body();
+
+    m_reminderInterval = new QSpinBox(card);
+    m_reminderInterval->setRange(kReminderMinMinutes, kReminderMaxMinutes);
+    m_reminderInterval->setValue(60);
+    m_reminderInterval->setSuffix(QStringLiteral(" 分钟"));
+    m_reminderInterval->setFixedWidth(96);
+    m_reminderInterval->setFocusPolicy(Qt::ClickFocus);
+    m_reminderInterval->setToolTip(QStringLiteral("最短 1 分钟，最长 7 天。进程在才会响。"));
+    m_reminderInterval->setStyleSheet(QStringLiteral(
+        "QSpinBox { border: 1px solid rgba(169,154,120,0.58); border-radius: 8px; "
+        "background: rgba(255,255,255,0.35); color: #4f4a3d; padding: 2px 6px; min-height: 24px; }"
+        "QSpinBox::up-button, QSpinBox::down-button { width: 16px; }"));
+    auto *intervalRow = new SettingRow(QStringLiteral("间隔"),
+                                       QStringLiteral("到点 toast / 托盘提示"),
+                                       m_reminderInterval, card);
+    body->addWidget(intervalRow);
+
+    body->addWidget(new Separator(card));
+
+    auto *addBox = new QWidget(card);
+    auto *addLayout = new QHBoxLayout(addBox);
+    addLayout->setContentsMargins(0, 0, 0, 0);
+    addLayout->setSpacing(6);
+
+    m_reminderText = new QLineEdit(addBox);
+    m_reminderText->setMaxLength(kReminderMaxText);
+    m_reminderText->setPlaceholderText(QStringLiteral("例如：喝水"));
+    m_reminderText->setProperty("editor", true);
+    m_reminderText->setFixedHeight(26);
+    m_reminderText->setMinimumWidth(88);
+    m_reminderText->setStyleSheet(QStringLiteral(
+        "QLineEdit { border: 1px solid rgba(169,154,120,0.58); border-radius: 8px; "
+        "background: rgba(255,255,255,0.35); color: #4f4a3d; padding: 2px 8px; }"));
+    addLayout->addWidget(m_reminderText, 1);
+
+    m_reminderAddAction = new TextAction(QStringLiteral("添加"), addBox);
+    m_reminderAddAction->setColors(Theme::AccentDark, Theme::Accent);
+    m_reminderAddAction->setFont(Theme::uiFont(11, QFont::DemiBold));
+    m_reminderAddAction->setToolTip(QStringLiteral("添加后等一个间隔再响，不立即弹"));
+    addLayout->addWidget(m_reminderAddAction, 0, Qt::AlignVCenter);
+
+    auto *textRow = new SettingRow(QStringLiteral("文案"), QString(), addBox, card);
+    body->addWidget(textRow);
+
+    connect(m_reminderAddAction, &QAbstractButton::clicked, this, &SettingsPage::submitNewReminder);
+    connect(m_reminderText, &QLineEdit::returnPressed, this, &SettingsPage::submitNewReminder);
+
+    body->addWidget(new Separator(card));
+
+    m_reminderList = new QWidget(card);
+    m_reminderList->setAttribute(Qt::WA_NoSystemBackground);
+    m_reminderList->setAutoFillBackground(false);
+    m_reminderListLayout = new QVBoxLayout(m_reminderList);
+    m_reminderListLayout->setContentsMargins(0, 0, 0, 0);
+    m_reminderListLayout->setSpacing(0);
+    body->addWidget(m_reminderList);
+
+    m_reminderEmpty = new QLabel(QStringLiteral("还没有提醒。填间隔和文案后点添加。"), card);
+    m_reminderEmpty->setFont(Theme::uiFont(10));
+    m_reminderEmpty->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(Theme::Muted.name()));
+    m_reminderEmpty->setWordWrap(true);
+    m_reminderEmpty->setContentsMargins(0, 8, 0, 8);
+    body->addWidget(m_reminderEmpty);
+
+    rebuildReminderRows();
+    return card;
+}
+
+void SettingsPage::submitNewReminder()
+{
+    if (!m_store || !m_reminderText || !m_reminderInterval)
+        return;
+    const QString text = m_reminderText->text().trimmed();
+    if (text.isEmpty()) {
+        emit messageRequested(QStringLiteral("请填写提醒文案"));
+        return;
+    }
+    if (m_store->reminders().size() >= kReminderMaxCount) {
+        emit messageRequested(QStringLiteral("最多 %1 条提醒").arg(kReminderMaxCount));
+        return;
+    }
+    const QString id = m_store->addReminder(text, m_reminderInterval->value());
+    if (id.isEmpty()) {
+        emit messageRequested(QStringLiteral("未能添加提醒"));
+        return;
+    }
+    m_reminderText->clear();
+    emit messageRequested(QStringLiteral("已添加"));
+}
+
+void SettingsPage::rebuildReminderRows()
+{
+    if (!m_reminderListLayout)
+        return;
+
+    while (QLayoutItem *item = m_reminderListLayout->takeAt(0)) {
+        if (QWidget *widget = item->widget()) {
+            widget->hide();
+            widget->deleteLater();
+        }
+        delete item;
+    }
+
+    const QVector<ReminderItem> items = m_store ? m_store->reminders() : QVector<ReminderItem>{};
+    if (m_reminderEmpty)
+        m_reminderEmpty->setVisible(items.isEmpty());
+
+    for (int i = 0; i < items.size(); ++i) {
+        const ReminderItem &item = items.at(i);
+        if (i > 0)
+            m_reminderListLayout->addWidget(new Separator(m_reminderList));
+
+        auto *controls = new QWidget(m_reminderList);
+        auto *controlLayout = new QHBoxLayout(controls);
+        controlLayout->setContentsMargins(0, 0, 0, 0);
+        controlLayout->setSpacing(6);
+
+        auto *toggle = new SwitchButton(controls);
+        toggle->setChecked(item.enabled);
+        toggle->setToolTip(item.enabled ? QStringLiteral("关闭后不再提醒")
+                                        : QStringLiteral("打开后等一个间隔再响"));
+        const QString id = item.id;
+        connect(toggle, &QAbstractButton::clicked, this, [this, id](bool on) {
+            if (m_syncing || !m_store)
+                return;
+            m_store->setReminderEnabled(id, on);
+        });
+        controlLayout->addWidget(toggle);
+
+        auto *remove = new TextAction(QStringLiteral("删除"), controls);
+        remove->setColors(Theme::Danger, Theme::Danger);
+        remove->setFont(Theme::uiFont(11));
+        remove->setToolTip(QStringLiteral("删除这条提醒"));
+        connect(remove, &QAbstractButton::clicked, this, [this, id] {
+            if (!m_store)
+                return;
+            m_store->removeReminder(id);
+            emit messageRequested(QStringLiteral("已删除提醒"));
+        });
+        controlLayout->addWidget(remove);
+
+        auto *row = new SettingRow(item.text, formatReminderInterval(item.intervalMinutes),
+                                   controls, m_reminderList);
+        m_reminderListLayout->addWidget(row);
+    }
 }
 
 QWidget *SettingsPage::buildReportsCard()
@@ -639,6 +794,8 @@ void SettingsPage::refresh()
     m_dockRight->setChecked(settings.dockSide == 2);
     if (m_retentionSpin)
         m_retentionSpin->setValue(settings.retentionDays);
+
+    rebuildReminderRows();
 
     const QString nativePath = QDir::toNativeSeparators(m_store->dataDir());
     const QFontMetrics metrics(m_pathLabel->font());

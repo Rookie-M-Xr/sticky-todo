@@ -745,6 +745,306 @@ void testPomodoroDoesNotTouchTodos()
         pass("pomodoro session fields ignored; todos survive edits");
 }
 
+void testReminderHelpers()
+{
+    const int before = g_failed;
+    expect(clampReminderInterval(0) == 1, "rem: clamp low");
+    expect(clampReminderInterval(60) == 60, "rem: clamp 60");
+    expect(clampReminderInterval(99999) == kReminderMaxMinutes, "rem: clamp high");
+    expect(formatReminderInterval(1) == QStringLiteral("每 1 分钟"), "rem: format minute");
+    expect(formatReminderInterval(90) == QStringLiteral("每 90 分钟"), "rem: format 90");
+    expect(formatReminderInterval(60) == QStringLiteral("每 1 小时"), "rem: format hour");
+
+    ReminderItem item;
+    item.text = QStringLiteral("喝水");
+    item.intervalMinutes = 60;
+    item.enabled = true;
+    const QDateTime t0(QDate(2026, 11, 2), QTime(12, 0, 0));
+    item.createdAt = t0;
+    item.lastFiredAt = t0;
+    expect(reminderNextDue(item) == t0.addSecs(3600), "rem: next due +1h");
+    expect(!reminderIsDue(item, t0), "rem: not due at create");
+    expect(!reminderIsDue(item, t0.addSecs(59 * 60)), "rem: not due at 59m");
+    expect(reminderIsDue(item, t0.addSecs(60 * 60)), "rem: due at 60m");
+    expect(reminderIsDue(item, t0.addSecs(90 * 60)), "rem: still due after miss");
+
+    item.enabled = false;
+    expect(!reminderIsDue(item, t0.addSecs(7200)), "rem: disabled never due");
+    item.enabled = true;
+    item.text.clear();
+    expect(!reminderIsDue(item, t0.addSecs(7200)), "rem: empty text not due");
+
+    bool ok = false;
+    const ReminderItem parsed = ReminderItem::fromJson(item.toJson(), &ok);
+    expect(!ok, "rem: empty text json invalid");
+    Q_UNUSED(parsed);
+
+    ReminderItem valid;
+    valid.id = QStringLiteral("r1");
+    valid.text = QStringLiteral("站起来");
+    valid.intervalMinutes = 30;
+    valid.enabled = true;
+    valid.createdAt = t0;
+    valid.updatedAt = t0;
+    valid.lastFiredAt = t0;
+    bool validOk = false;
+    const ReminderItem round = ReminderItem::fromJson(valid.toJson(), &validOk);
+    expect(validOk, "rem: json ok");
+    expect(round.text == QStringLiteral("站起来"), "rem: json text");
+    expect(round.intervalMinutes == 30, "rem: json interval");
+    expect(round.enabled, "rem: json enabled");
+
+    QJsonObject badInterval = valid.toJson();
+    badInterval.insert(QStringLiteral("intervalMinutes"), 0);
+    bool badOk = true;
+    ReminderItem::fromJson(badInterval, &badOk);
+    expect(!badOk, "rem: interval 0 rejected");
+
+    if (g_failed == before)
+        pass("reminder helpers (due / disable / json)");
+}
+
+void testReminderStorePersistAndDisable()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "rem-store: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    const QString remindersFile = QDir(dataDir).filePath(QStringLiteral("reminders.json"));
+    const QString todosFile = QDir(dataDir).filePath(QStringLiteral("todos.json"));
+    QString keepId;
+    QString todoId;
+    {
+        DataStore store;
+        expect(store.load(), "rem-store: load");
+        todoId = store.addTodo(QStringLiteral("unrelated"), QDate::currentDate());
+        expect(!todoId.isEmpty(), "rem-store: seed todo");
+        expect(store.flush(), "rem-store: flush todo");
+
+        expect(store.addReminder(QString(), 60).isEmpty(), "rem-store: empty text rejected");
+        expect(store.addReminder(QStringLiteral("喝水"), 0).isEmpty(), "rem-store: interval 0 rejected");
+        keepId = store.addReminder(QStringLiteral("喝水"), 60);
+        expect(!keepId.isEmpty(), "rem-store: add");
+        expect(store.reminders().size() == 1, "rem-store: one reminder");
+        expect(store.findReminder(keepId) != nullptr, "rem-store: find");
+        expect(store.findReminder(keepId)->enabled, "rem-store: enabled by default");
+        expect(store.findReminder(keepId)->intervalMinutes == 60, "rem-store: interval");
+        expect(!reminderIsDue(*store.findReminder(keepId), QDateTime::currentDateTime()),
+               "rem-store: not due immediately after add");
+        expect(QFile::exists(remindersFile), "rem-store: reminders.json written");
+        expect(store.flush(), "rem-store: flush");
+    }
+
+    {
+        QFile todoFile(todosFile);
+        expect(todoFile.open(QIODevice::ReadOnly), "rem-store: reread todos");
+        const QJsonDocument doc = QJsonDocument::fromJson(todoFile.readAll());
+        todoFile.close();
+        const QJsonObject root = doc.object();
+        expect(!root.contains(QStringLiteral("reminders")), "rem-store: todos.json has no reminders key");
+        const QJsonArray todos = root.value(QStringLiteral("todos")).toArray();
+        expect(todos.size() == 1, "rem-store: todo untouched count");
+        expect(!todos.at(0).toObject().contains(QStringLiteral("intervalMinutes")),
+               "rem-store: todo item has no reminder fields");
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "rem-store: reload");
+        expect(store.reminders().size() == 1, "rem-store: persisted count");
+        const ReminderItem *item = store.findReminder(keepId);
+        expect(item != nullptr && item->text == QStringLiteral("喝水"), "rem-store: text kept");
+        expect(item && item->enabled, "rem-store: still enabled");
+        expect(store.findTodo(todoId) != nullptr, "rem-store: todo still there");
+        expect(store.setReminderEnabled(keepId, false), "rem-store: disable");
+        expect(store.findReminder(keepId) && !store.findReminder(keepId)->enabled,
+               "rem-store: disabled in memory");
+        expect(store.flush(), "rem-store: flush disable");
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "rem-store: reload disabled");
+        const ReminderItem *item = store.findReminder(keepId);
+        expect(item != nullptr && !item->enabled, "rem-store: disabled persisted");
+        ReminderItem overdue = *item;
+        overdue.lastFiredAt = QDateTime::currentDateTime().addSecs(-7200);
+        expect(!reminderIsDue(overdue, QDateTime::currentDateTime()),
+               "rem-store: disabled overdue does not fire");
+        expect(store.setReminderEnabled(keepId, true), "rem-store: re-enable");
+        const ReminderItem *on = store.findReminder(keepId);
+        expect(on && on->enabled, "rem-store: enabled again");
+        expect(on && !reminderIsDue(*on, QDateTime::currentDateTime()),
+               "rem-store: re-enable resets lastFired, not immediately due");
+        expect(store.removeReminder(keepId), "rem-store: remove");
+        expect(store.findReminder(keepId) == nullptr, "rem-store: gone");
+        expect(store.flush(), "rem-store: flush remove");
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "rem-store: reload after remove");
+        expect(store.reminders().isEmpty(), "rem-store: empty after remove");
+        expect(store.findTodo(todoId) != nullptr, "rem-store: todo survives reminder delete");
+    }
+
+    if (g_failed == before)
+        pass("reminder persist / disable / isolate from todos");
+}
+
+void testReminderDueThenMarkFired()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "rem-due: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    const QDateTime t0 = QDateTime::currentDateTime();
+    QString id;
+    {
+        DataStore store;
+        expect(store.load(), "rem-due: load");
+        QJsonObject root;
+        root.insert(QStringLiteral("schemaVersion"), 1);
+        QJsonObject row;
+        id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        row.insert(QStringLiteral("id"), id);
+        row.insert(QStringLiteral("text"), QStringLiteral("喝水"));
+        row.insert(QStringLiteral("intervalMinutes"), 1);
+        row.insert(QStringLiteral("enabled"), true);
+        row.insert(QStringLiteral("lastFiredAt"), t0.addSecs(-120).toString(Qt::ISODateWithMs));
+        row.insert(QStringLiteral("createdAt"), t0.addSecs(-600).toString(Qt::ISODateWithMs));
+        row.insert(QStringLiteral("updatedAt"), t0.addSecs(-120).toString(Qt::ISODateWithMs));
+        root.insert(QStringLiteral("reminders"), QJsonArray{row});
+        QFile file(store.remindersPath());
+        expect(QDir().mkpath(dataDir), "rem-due: mkpath");
+        expect(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "rem-due: write seed");
+        file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+        file.close();
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "rem-due: load overdue");
+        const ReminderItem *item = store.findReminder(id);
+        expect(item != nullptr, "rem-due: loaded");
+        expect(item && reminderIsDue(*item, t0), "rem-due: overdue is due");
+        expect(store.markReminderFired(id, t0), "rem-due: mark fired");
+        const ReminderItem *after = store.findReminder(id);
+        expect(after && !reminderIsDue(*after, t0), "rem-due: not due after fire");
+        expect(after && reminderIsDue(*after, t0.addSecs(60)), "rem-due: due again after interval");
+        expect(store.flush(), "rem-due: flush");
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "rem-due: reload after fire");
+        const ReminderItem *item = store.findReminder(id);
+        expect(item != nullptr, "rem-due: still there");
+        expect(item && !reminderIsDue(*item, t0), "rem-due: lastFired persisted");
+        expect(store.findTodo(QStringLiteral("missing")) == nullptr, "rem-due: no stray todo");
+    }
+
+    if (g_failed == before)
+        pass("reminder due + markFired advances lastFired");
+}
+
+void testReminderCorruptionRecovery()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "rem-bak: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    QString keepId;
+    {
+        DataStore store;
+        expect(store.load(), "rem-bak: load");
+        keepId = store.addReminder(QStringLiteral("keep-rem"), 15);
+        expect(!keepId.isEmpty(), "rem-bak: seed");
+        expect(store.flush(), "rem-bak: first flush");
+        expect(store.setReminderEnabled(keepId, false), "rem-bak: touch for bak");
+        expect(store.flush(), "rem-bak: second flush");
+        expect(QFile::exists(store.remindersPath() + QStringLiteral(".bak")),
+               "rem-bak: .bak exists");
+        expect(store.setReminderEnabled(keepId, true), "rem-bak: enable latest");
+        expect(store.flush(), "rem-bak: third flush");
+    }
+
+    {
+        QFile file(QDir(dataDir).filePath(QStringLiteral("reminders.json")));
+        expect(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "rem-bak: corrupt");
+        file.write("{ not-json");
+        file.close();
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "rem-bak: load after corrupt");
+        expect(store.reminders().size() == 1, "rem-bak: recovered one");
+        const ReminderItem *item = store.findReminder(keepId);
+        expect(item != nullptr && item->text == QStringLiteral("keep-rem"),
+               "rem-bak: text from backup");
+        expect(!store.takeNotices().isEmpty(), "rem-bak: notices");
+    }
+
+    if (g_failed == before)
+        pass("reminder corruption recovery from .bak");
+}
+
+void testReminderCapAndSkipInvalid()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "rem-cap: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    {
+        DataStore store;
+        expect(store.load(), "rem-cap: load");
+        QJsonArray array;
+        for (int i = 0; i < kReminderMaxCount + 3; ++i) {
+            QJsonObject row;
+            row.insert(QStringLiteral("id"), QStringLiteral("cap-%1").arg(i));
+            row.insert(QStringLiteral("text"), QStringLiteral("n%1").arg(i));
+            row.insert(QStringLiteral("intervalMinutes"), 10);
+            row.insert(QStringLiteral("enabled"), true);
+            row.insert(QStringLiteral("lastFiredAt"),
+                       QDateTime::currentDateTime().toString(Qt::ISODateWithMs));
+            row.insert(QStringLiteral("createdAt"),
+                       QDateTime::currentDateTime().toString(Qt::ISODateWithMs));
+            array.append(row);
+        }
+        QJsonObject skip;
+        skip.insert(QStringLiteral("id"), QStringLiteral("bad"));
+        skip.insert(QStringLiteral("text"), QString());
+        skip.insert(QStringLiteral("intervalMinutes"), 10);
+        array.append(skip);
+        QJsonObject root;
+        root.insert(QStringLiteral("schemaVersion"), 1);
+        root.insert(QStringLiteral("reminders"), array);
+        QFile file(store.remindersPath());
+        expect(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "rem-cap: write");
+        file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+        file.close();
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "rem-cap: reload");
+        expect(store.reminders().size() == kReminderMaxCount, "rem-cap: capped");
+        expect(store.addReminder(QStringLiteral("overflow"), 5).isEmpty(), "rem-cap: add rejected at cap");
+    }
+
+    if (g_failed == before)
+        pass("reminder cap + skip invalid rows");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -763,6 +1063,11 @@ int main(int argc, char *argv[])
     testTrayHideHintPersist();
     testPomodoroHelpers();
     testPomodoroDoesNotTouchTodos();
+    testReminderHelpers();
+    testReminderStorePersistAndDisable();
+    testReminderDueThenMarkFired();
+    testReminderCorruptionRecovery();
+    testReminderCapAndSkipInvalid();
 
     if (g_failed != 0) {
         std::fprintf(stderr, "%d assertion(s) failed\n", g_failed);

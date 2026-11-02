@@ -43,11 +43,13 @@ DataStore::DataStore(QObject *parent)
 {
     m_todoSaveTimer.setSingleShot(true);
     m_settingsSaveTimer.setSingleShot(true);
+    m_reminderSaveTimer.setSingleShot(true);
     m_dailySaveTimer.setSingleShot(true);
     m_weeklySaveTimer.setSingleShot(true);
     m_monthlySaveTimer.setSingleShot(true);
     connect(&m_todoSaveTimer, &QTimer::timeout, this, &DataStore::saveTodosNow);
     connect(&m_settingsSaveTimer, &QTimer::timeout, this, &DataStore::saveSettingsNow);
+    connect(&m_reminderSaveTimer, &QTimer::timeout, this, &DataStore::saveRemindersNow);
     connect(&m_dailySaveTimer, &QTimer::timeout, this, [this]() { saveDailyNow(); });
     connect(&m_weeklySaveTimer, &QTimer::timeout, this, [this]() { saveWeeklyNow(); });
     connect(&m_monthlySaveTimer, &QTimer::timeout, this, [this]() { saveMonthlyNow(); });
@@ -80,6 +82,11 @@ QString DataStore::settingsPath() const
 QString DataStore::archivePath() const
 {
     return QDir(m_dataDir).filePath(QStringLiteral("todos-archive.json"));
+}
+
+QString DataStore::remindersPath() const
+{
+    return QDir(m_dataDir).filePath(QStringLiteral("reminders.json"));
 }
 
 QString DataStore::dailyReportsPath() const
@@ -153,6 +160,7 @@ bool DataStore::load()
     m_loaded = true;
     loadTodos();
     loadSettings();
+    loadReminders();
     loadDailyReports();
     loadWeeklyReports();
     loadMonthlyReports();
@@ -165,6 +173,7 @@ bool DataStore::flush()
 {
     m_todoSaveTimer.stop();
     m_settingsSaveTimer.stop();
+    m_reminderSaveTimer.stop();
     m_dailySaveTimer.stop();
     m_weeklySaveTimer.stop();
     m_monthlySaveTimer.stop();
@@ -176,6 +185,10 @@ bool DataStore::flush()
     if (m_settingsDirty) {
         saveSettingsNow();
         ok = ok && !m_settingsDirty;
+    }
+    if (m_remindersDirty) {
+        saveRemindersNow();
+        ok = ok && !m_remindersDirty;
     }
     if (m_dailyDirty) {
         saveDailyNow();
@@ -206,6 +219,87 @@ const TodoItem *DataStore::findTodo(const QString &id) const
             return &item;
     }
     return nullptr;
+}
+
+const ReminderItem *DataStore::findReminder(const QString &id) const
+{
+    for (const ReminderItem &item : m_reminders) {
+        if (item.id == id)
+            return &item;
+    }
+    return nullptr;
+}
+
+QString DataStore::addReminder(const QString &text, int intervalMinutes)
+{
+    const QString trimmed = text.trimmed().left(kReminderMaxText);
+    if (trimmed.isEmpty())
+        return {};
+    if (m_reminders.size() >= kReminderMaxCount)
+        return {};
+    const int interval = clampReminderInterval(intervalMinutes);
+    if (intervalMinutes < kReminderMinMinutes || intervalMinutes > kReminderMaxMinutes)
+        return {};
+
+    const QDateTime now = QDateTime::currentDateTime();
+    ReminderItem item;
+    item.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    item.text = trimmed;
+    item.intervalMinutes = interval;
+    item.enabled = true;
+    item.lastFiredAt = now;
+    item.createdAt = now;
+    item.updatedAt = now;
+    m_reminders.append(item);
+    scheduleRemindersSave(0);
+    emit remindersChanged();
+    return item.id;
+}
+
+bool DataStore::setReminderEnabled(const QString &id, bool enabled)
+{
+    for (ReminderItem &item : m_reminders) {
+        if (item.id != id)
+            continue;
+        if (item.enabled == enabled)
+            return true;
+        const QDateTime now = QDateTime::currentDateTime();
+        item.enabled = enabled;
+        item.updatedAt = now;
+        if (enabled)
+            item.lastFiredAt = now;
+        scheduleRemindersSave(0);
+        emit remindersChanged();
+        return true;
+    }
+    return false;
+}
+
+bool DataStore::removeReminder(const QString &id)
+{
+    for (int i = 0; i < m_reminders.size(); ++i) {
+        if (m_reminders.at(i).id != id)
+            continue;
+        m_reminders.removeAt(i);
+        scheduleRemindersSave(0);
+        emit remindersChanged();
+        return true;
+    }
+    return false;
+}
+
+bool DataStore::markReminderFired(const QString &id, const QDateTime &when)
+{
+    const QDateTime stamp = when.isValid() ? when : QDateTime::currentDateTime();
+    for (ReminderItem &item : m_reminders) {
+        if (item.id != id)
+            continue;
+        item.lastFiredAt = stamp;
+        item.updatedAt = stamp;
+        scheduleRemindersSave(0);
+        return true;
+    }
+    return false;
 }
 
 QString DataStore::addTodo(const QString &text, QDate dueDate)
@@ -773,6 +867,17 @@ void DataStore::scheduleSettingsSave(int delayMs)
     m_settingsSaveTimer.start(delayMs);
 }
 
+void DataStore::scheduleRemindersSave(int delayMs)
+{
+    m_remindersDirty = true;
+    if (delayMs <= 0) {
+        m_reminderSaveTimer.stop();
+        saveRemindersNow();
+        return;
+    }
+    m_reminderSaveTimer.start(delayMs);
+}
+
 void DataStore::saveTodosNow()
 {
     m_todoSaveTimer.stop();
@@ -790,6 +895,29 @@ void DataStore::saveTodosNow()
         m_lastError.clear();
     } else {
         const QString message = QStringLiteral("待办保存失败：%1").arg(error);
+        m_lastError = message;
+        addNotice(message);
+        emit errorOccurred(message);
+    }
+}
+
+void DataStore::saveRemindersNow()
+{
+    m_reminderSaveTimer.stop();
+    if (!m_remindersDirty)
+        return;
+    QJsonArray array;
+    for (const ReminderItem &item : std::as_const(m_reminders))
+        array.append(item.toJson());
+    QJsonObject root;
+    root.insert(QStringLiteral("schemaVersion"), kSchemaVersion);
+    root.insert(QStringLiteral("reminders"), array);
+    QString error;
+    if (writeJson(remindersPath(), root, &error)) {
+        m_remindersDirty = false;
+        m_lastError.clear();
+    } else {
+        const QString message = QStringLiteral("提醒保存失败：%1").arg(error);
         m_lastError = message;
         addNotice(message);
         emit errorOccurred(message);
@@ -1060,6 +1188,90 @@ void DataStore::loadSettings()
     }
 }
 
+void DataStore::loadReminders()
+{
+    const QString path = remindersPath();
+    if (!QFileInfo::exists(path)) {
+        m_reminders.clear();
+        return;
+    }
+
+    auto readReminderFile = [](const QString &filePath, QVector<ReminderItem> *items,
+                               int *invalidCount, QString *why) {
+        QFile file(filePath);
+        if (!file.open(QIODevice::ReadOnly)) {
+            if (why)
+                *why = file.errorString();
+            return false;
+        }
+        const QByteArray bytes = file.readAll();
+        QJsonParseError parseError;
+        const QJsonDocument doc = QJsonDocument::fromJson(bytes, &parseError);
+        if (parseError.error != QJsonParseError::NoError) {
+            if (why)
+                *why = parseError.errorString();
+            return false;
+        }
+        if (!doc.isObject()) {
+            if (why)
+                *why = QStringLiteral("根节点不是对象");
+            return false;
+        }
+        const QJsonObject root = doc.object();
+        const QJsonValue arrayValue = root.value(QStringLiteral("reminders"));
+        if (!arrayValue.isArray()) {
+            if (why)
+                *why = QStringLiteral("reminders 字段缺失或类型错误");
+            return false;
+        }
+        const int schema = root.value(QStringLiteral("schemaVersion")).toInt(kSchemaVersion);
+        items->clear();
+        int invalid = 0;
+        const QJsonArray array = arrayValue.toArray();
+        items->reserve(qMin(array.size(), kReminderMaxCount));
+        for (const QJsonValue &value : array) {
+            if (items->size() >= kReminderMaxCount)
+                break;
+            if (!value.isObject()) {
+                ++invalid;
+                continue;
+            }
+            bool ok = false;
+            const ReminderItem item = ReminderItem::fromJson(value.toObject(), &ok);
+            if (ok)
+                items->append(item);
+            else
+                ++invalid;
+        }
+        if (invalidCount)
+            *invalidCount = invalid;
+        if (schema > kSchemaVersion && why)
+            *why = QStringLiteral("数据版本 %1 高于当前支持的 %2").arg(schema).arg(kSchemaVersion);
+        return true;
+    };
+
+    QVector<ReminderItem> items;
+    int invalidCount = 0;
+    QString problem;
+    if (readReminderFile(path, &items, &invalidCount, &problem)) {
+        m_reminders = items;
+        if (invalidCount > 0)
+            addNotice(QStringLiteral("有 %1 条提醒格式异常，已安全跳过并保留原文件。").arg(invalidCount));
+        return;
+    }
+
+    addNotice(QStringLiteral("提醒数据读取失败（%1），正在尝试备份。").arg(problem));
+    preserveCorruptFile(path);
+    QString backupWarning;
+    if (reloadReminderBackup(&backupWarning)) {
+        addNotice(backupWarning);
+        scheduleRemindersSave(0);
+    } else {
+        m_reminders.clear();
+        scheduleRemindersSave(0);
+    }
+}
+
 void DataStore::preserveCorruptFile(const QString &path)
 {
     const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss"));
@@ -1165,6 +1377,40 @@ bool DataStore::reloadSettingsBackup(QString *warning)
     m_settings = fallback;
     if (warning)
         *warning = QStringLiteral("已从上一份备份恢复窗口与设置。");
+    return true;
+}
+
+bool DataStore::reloadReminderBackup(QString *warning)
+{
+    const QString backup = remindersPath() + QStringLiteral(".bak");
+    if (!QFileInfo::exists(backup))
+        return false;
+
+    QFile file(backup);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject())
+        return false;
+    const QJsonValue arrayValue = doc.object().value(QStringLiteral("reminders"));
+    if (!arrayValue.isArray())
+        return false;
+
+    QVector<ReminderItem> items;
+    for (const QJsonValue &value : arrayValue.toArray()) {
+        if (!value.isObject())
+            continue;
+        bool ok = false;
+        const ReminderItem item = ReminderItem::fromJson(value.toObject(), &ok);
+        if (ok)
+            items.append(item);
+        if (items.size() >= kReminderMaxCount)
+            break;
+    }
+    m_reminders = items;
+    if (warning)
+        *warning = QStringLiteral("已从上一份备份恢复 %1 条提醒。").arg(items.size());
     return true;
 }
 

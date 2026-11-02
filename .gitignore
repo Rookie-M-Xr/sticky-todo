@@ -19,6 +19,7 @@ qrc_*.cpp
 /testdata/
 **/config/todos.json
 **/config/settings.json
+**/config/reminders.json
 **/config/*.bak
 **/config/*.corrupt-*
 

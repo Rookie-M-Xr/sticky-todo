@@ -35,6 +35,31 @@ struct DailySnapshot {
     static DailySnapshot fromJson(const QJsonObject &object, bool *ok = nullptr);
 };
 
+// Interval reminders (TR #19). Own file reminders.json — never a TodoItem field.
+struct ReminderItem {
+    QString id;
+    QString text;
+    int intervalMinutes = 60;
+    bool enabled = true;
+    QDateTime lastFiredAt;
+    QDateTime createdAt;
+    QDateTime updatedAt;
+
+    QJsonObject toJson() const;
+    static ReminderItem fromJson(const QJsonObject &object, bool *ok = nullptr);
+};
+
+constexpr int kReminderMinMinutes = 1;
+constexpr int kReminderMaxMinutes = 7 * 24 * 60;
+constexpr int kReminderMaxText = 200;
+constexpr int kReminderMaxCount = 20;
+
+int clampReminderInterval(int minutes);
+QString formatReminderInterval(int minutes);
+QDateTime reminderAnchor(const ReminderItem &item);
+QDateTime reminderNextDue(const ReminderItem &item);
+bool reminderIsDue(const ReminderItem &item, const QDateTime &now = QDateTime());
+
 enum class ReportKind {
     Daily,
     Weekly,

@@ -55,6 +55,7 @@ public:
     QString todosPath() const;
     QString settingsPath() const;
     QString archivePath() const;
+    QString remindersPath() const;
     QStringList takeNotices();
 
     const TodoItem *findTodo(const QString &id) const;
@@ -85,6 +86,13 @@ public:
     //     or skip. All other fields (text/due/completed/timestamps) stay intact.
     int importArchived(const QVector<int> &indices);
     int importAllArchived();
+
+    const QVector<ReminderItem> &reminders() const { return m_reminders; }
+    const ReminderItem *findReminder(const QString &id) const;
+    QString addReminder(const QString &text, int intervalMinutes);
+    bool setReminderEnabled(const QString &id, bool enabled);
+    bool removeReminder(const QString &id);
+    bool markReminderFired(const QString &id, const QDateTime &when = QDateTime());
 
     QString dailyReportsPath() const;
     QString weeklyReportsPath() const;
@@ -128,6 +136,7 @@ public:
 signals:
     void todosChanged();
     void settingsChanged();
+    void remindersChanged();
     void errorOccurred(const QString &message);
     void dailyReportsChanged();
     void weeklyReportsChanged();
@@ -143,6 +152,10 @@ private:
     bool writeJson(const QString &path, const QJsonObject &root, QString *error);
     void loadTodos();
     void loadSettings();
+    void loadReminders();
+    void scheduleRemindersSave(int delayMs);
+    void saveRemindersNow();
+    bool reloadReminderBackup(QString *warning);
     void preserveCorruptFile(const QString &path);
     bool reloadTodoBackup(QString *warning);
     bool reloadSettingsBackup(QString *warning);
@@ -177,16 +190,19 @@ private:
     int importArchivedEntries(const QVector<int> &indices);
 
     QVector<TodoItem> m_todos;
+    QVector<ReminderItem> m_reminders;
     AppSettings m_settings;
     QString m_dataDir;
     QStringList m_notices;
     QString m_lastError;
     QTimer m_todoSaveTimer;
     QTimer m_settingsSaveTimer;
+    QTimer m_reminderSaveTimer;
     bool m_loaded = false;
     bool m_firstRun = false;
     bool m_todosDirty = false;
     bool m_settingsDirty = false;
+    bool m_remindersDirty = false;
     QMap<QString, QVector<DailySnapshot>> m_dailyByDate; // key = yyyy-MM-dd
     QMap<QString, QVector<DailySnapshot>> m_weeklyByKey; // key = yyyy-Www
     QMap<QString, QVector<DailySnapshot>> m_monthlyByKey; // key = yyyy-MM
