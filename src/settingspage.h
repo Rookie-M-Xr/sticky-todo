@@ -7,6 +7,7 @@
 class DataStore;
 class QEvent;
 class QLabel;
+class QLineEdit;
 class QPushButton;
 class QScrollArea;
 class QSpinBox;
@@ -37,10 +38,13 @@ signals:
 private:
     void buildUi();
     QWidget *buildGeneralCard();
+    QWidget *buildRemindersCard();
     QWidget *buildReportsCard();
     QWidget *buildWindowCard();
     QWidget *buildDataCard();
     QWidget *buildAboutCard();
+    void rebuildReminderRows();
+    void submitNewReminder();
 
     DataStore *m_store = nullptr;
     QScrollArea *m_scroll = nullptr;
@@ -66,5 +70,11 @@ private:
     TextAction *m_archiveExpiredAction = nullptr;
     TextAction *m_importAllArchivedAction = nullptr;
     TextAction *m_importPickArchivedAction = nullptr;
+    QSpinBox *m_reminderInterval = nullptr;
+    QLineEdit *m_reminderText = nullptr;
+    TextAction *m_reminderAddAction = nullptr;
+    QWidget *m_reminderList = nullptr;
+    QVBoxLayout *m_reminderListLayout = nullptr;
+    QLabel *m_reminderEmpty = nullptr;
     bool m_syncing = false;
 };

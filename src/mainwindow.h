@@ -137,6 +137,8 @@ private:
     void applyPomodoroToView();
     void notifyPomodoroFinished(const QString &text);
     int pomodoroSecondsLeft() const;
+    void onReminderTick();
+    void notifyReminderDue(const QString &text);
     void handleGroupExpansion(GroupId id, bool expanded);
     void handleSearchChanged(const QString &text);
     void runSearch();
@@ -184,6 +186,7 @@ private:
     QTimer *m_pomodoroTick = nullptr;
     QString m_pomodoroId;
     QDateTime m_pomodoroDeadline;
+    QTimer *m_reminderTick = nullptr;
 
     QDate m_currentDate;
     QString m_searchQuery;

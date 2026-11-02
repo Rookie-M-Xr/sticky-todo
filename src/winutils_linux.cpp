@@ -161,6 +161,8 @@ int migrateDataFiles(const QString &srcDir, const QString &dstDir)
         "settings.json",
         "settings.json.bak",
         "todos-archive.json",
+        "reminders.json",
+        "reminders.json.bak",
         "daily-reports.json",
         "weekly-reports.json",
         "monthly-reports.json",
