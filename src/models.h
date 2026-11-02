@@ -36,8 +36,9 @@ struct DailySnapshot {
     static DailySnapshot fromJson(const QJsonObject &object, bool *ok = nullptr);
 };
 
-// Interval reminders (TR #19 + #42). Own file reminders.json — never a TodoItem field.
-// Same-day active window [start, end) on the local clock. Cross-midnight is unsupported.
+// Interval reminders (TR #19 + #42 + #50). Own file reminders.json — never a TodoItem field.
+// Local-clock window: same-day [start, end) when start < end;
+// cross-midnight [start, 24:00) ∪ [00:00, end) when end <= start.
 constexpr int kReminderMinMinutes = 1;
 constexpr int kReminderMaxMinutes = 7 * 24 * 60;
 constexpr int kReminderMaxText = 200;

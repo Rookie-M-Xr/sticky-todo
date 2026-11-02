@@ -1507,9 +1507,14 @@ void testReminderActiveWindowAndInterval()
 
     expect(reminderWindowValid(9 * 60, 18 * 60), "rem-win: 09-18 valid");
     expect(reminderWindowValid(0, kReminderDayMinutes), "rem-win: all-day valid");
-    expect(!reminderWindowValid(18 * 60, 9 * 60), "rem-win: cross-midnight invalid");
-    expect(!reminderWindowValid(9 * 60, 9 * 60), "rem-win: empty window invalid");
+    expect(reminderWindowValid(22 * 60, 6 * 60), "rem-win: 22-06 valid");
+    expect(reminderWindowValid(18 * 60, 9 * 60), "rem-win: cross-midnight valid");
+    expect(reminderWindowValid(22 * 60, 0), "rem-win: wrap to midnight valid");
+    expect(reminderWindowValid(9 * 60, 9 * 60), "rem-win: equal times wrap all-day");
     expect(!reminderWindowValid(-1, 18 * 60), "rem-win: start below range");
+    expect(!reminderWindowValid(kReminderDayMinutes, 6 * 60), "rem-win: start at 24:00 invalid");
+    expect(!reminderWindowValid(9 * 60, -1), "rem-win: end below range");
+    expect(!reminderWindowValid(9 * 60, kReminderDayMinutes + 1), "rem-win: end above range");
     expect(formatReminderTime(9 * 60) == QStringLiteral("09:00"), "rem-win: format 09:00");
     expect(formatReminderTime(kReminderDayMinutes) == QStringLiteral("24:00"), "rem-win: format 24:00");
     expect(formatReminderWindow(9 * 60, 18 * 60) == QStringLiteral("09:00–18:00"),
@@ -1560,12 +1565,43 @@ void testReminderActiveWindowAndInterval()
     expect(reminderIsDue(item, at(13, 30)), "rem-win: 90min due");
 
     ReminderItem overnight = item;
+    overnight.intervalMinutes = 60;
     overnight.activeStartMinutes = 22 * 60;
     overnight.activeEndMinutes = 6 * 60;
-    overnight.lastFiredAt = at(20, 0);
-    expect(!reminderWindowValid(overnight.activeStartMinutes, overnight.activeEndMinutes),
-           "rem-win: overnight helper invalid");
-    expect(!reminderIsDue(overnight, at(23, 0)), "rem-win: overnight never due");
+    overnight.createdAt = at(20, 0);
+    overnight.lastFiredAt = at(21, 0);
+    expect(reminderWindowValid(overnight.activeStartMinutes, overnight.activeEndMinutes),
+           "rem-win: overnight helper valid");
+    expect(!reminderInActiveWindow(overnight, at(12, 0)), "rem-win: 12:00 outside overnight");
+    expect(!reminderInActiveWindow(overnight, at(21, 59, 59)), "rem-win: 21:59 outside overnight");
+    expect(reminderInActiveWindow(overnight, at(22, 0)), "rem-win: 22:00 inclusive");
+    expect(reminderInActiveWindow(overnight, at(23, 30)), "rem-win: 23:30 inside");
+    expect(reminderInActiveWindow(overnight, at(0, 0)), "rem-win: 00:00 inside overnight");
+    expect(reminderInActiveWindow(overnight, at(1, 0)), "rem-win: 01:00 inside overnight");
+    expect(reminderInActiveWindow(overnight, at(5, 59, 59)), "rem-win: 05:59 inside overnight");
+    expect(!reminderInActiveWindow(overnight, at(6, 0)), "rem-win: 06:00 exclusive");
+    overnight.lastFiredAt = at(11, 0);
+    expect(!reminderIsDue(overnight, at(12, 0)), "rem-win: no toast at 12:xx");
+    overnight.lastFiredAt = at(22, 0);
+    expect(reminderIsDue(overnight, at(23, 0)), "rem-win: toast at 23:xx");
+    overnight.lastFiredAt = at(0, 0);
+    expect(reminderIsDue(overnight, at(1, 0)), "rem-win: toast at 01:xx");
+    overnight.lastFiredAt = at(23, 0);
+    expect(reminderIsDue(overnight, QDateTime(day.addDays(1), QTime(1, 0))),
+           "rem-win: toast 01:xx next calendar day");
+    overnight.lastFiredAt = at(21, 0);
+    expect(!reminderIsDue(overnight, at(21, 30)), "rem-win: overdue still gated before window");
+    expect(reminderIsDue(overnight, at(22, 0)), "rem-win: fires when overnight window opens");
+
+    ReminderItem wrapEqual;
+    wrapEqual.text = QStringLiteral("全天");
+    wrapEqual.intervalMinutes = 60;
+    wrapEqual.activeStartMinutes = 9 * 60;
+    wrapEqual.activeEndMinutes = 9 * 60;
+    wrapEqual.lastFiredAt = at(8, 0);
+    expect(reminderInActiveWindow(wrapEqual, at(12, 0)), "rem-win: 09-09 covers noon");
+    expect(reminderInActiveWindow(wrapEqual, at(3, 0)), "rem-win: 09-09 covers night");
+    expect(reminderIsDue(wrapEqual, at(9, 0)), "rem-win: 09-09 due at start");
 
     ReminderItem allDay;
     allDay.text = QStringLiteral("旧");
@@ -1591,9 +1627,11 @@ void testReminderActiveWindowAndInterval()
     QJsonObject overnightJson = item.toJson();
     overnightJson.insert(QStringLiteral("activeStart"), QStringLiteral("22:00"));
     overnightJson.insert(QStringLiteral("activeEnd"), QStringLiteral("06:00"));
-    bool overnightOk = true;
-    ReminderItem::fromJson(overnightJson, &overnightOk);
-    expect(!overnightOk, "rem-win: json overnight rejected");
+    bool overnightOk = false;
+    const ReminderItem overnightRound = ReminderItem::fromJson(overnightJson, &overnightOk);
+    expect(overnightOk, "rem-win: json overnight accepted");
+    expect(overnightRound.activeStartMinutes == 22 * 60, "rem-win: json overnight start");
+    expect(overnightRound.activeEndMinutes == 6 * 60, "rem-win: json overnight end");
 
     if (g_failed == before)
         pass("reminder active window + interval");
@@ -1608,18 +1646,20 @@ void testReminderWindowPersistAndLegacyMigrate()
         return;
 
     QString keepId;
+    QString overnightId;
     {
         DataStore store;
         expect(store.load(), "rem-win-store: load");
-        expect(store.addReminder(QStringLiteral("夜间"), 60, 22 * 60, 6 * 60).isEmpty(),
-               "rem-win-store: cross-midnight rejected");
-        expect(store.addReminder(QStringLiteral("空窗"), 60, 9 * 60, 9 * 60).isEmpty(),
-               "rem-win-store: empty window rejected");
+        overnightId = store.addReminder(QStringLiteral("夜间"), 60, 22 * 60, 6 * 60);
+        expect(!overnightId.isEmpty(), "rem-win-store: cross-midnight accepted");
         keepId = store.addReminder(QStringLiteral("喝水"), 60, 9 * 60, 18 * 60);
         expect(!keepId.isEmpty(), "rem-win-store: add windowed");
         const ReminderItem *item = store.findReminder(keepId);
         expect(item && item->activeStartMinutes == 9 * 60, "rem-win-store: start in memory");
         expect(item && item->activeEndMinutes == 18 * 60, "rem-win-store: end in memory");
+        const ReminderItem *night = store.findReminder(overnightId);
+        expect(night && night->activeStartMinutes == 22 * 60, "rem-win-store: overnight start");
+        expect(night && night->activeEndMinutes == 6 * 60, "rem-win-store: overnight end");
         expect(store.flush(), "rem-win-store: flush");
     }
 
@@ -1631,7 +1671,27 @@ void testReminderWindowPersistAndLegacyMigrate()
         expect(item && item->intervalMinutes == 60, "rem-win-store: interval persisted");
         expect(item && item->activeStartMinutes == 9 * 60, "rem-win-store: start persisted");
         expect(item && item->activeEndMinutes == 18 * 60, "rem-win-store: end persisted");
-        expect(store.reminders().size() == 1, "rem-win-store: count");
+        const ReminderItem *night = store.findReminder(overnightId);
+        expect(night && night->text == QStringLiteral("夜间"), "rem-win-store: overnight text");
+        expect(night && night->intervalMinutes == 60, "rem-win-store: overnight interval");
+        expect(night && night->activeStartMinutes == 22 * 60,
+               "rem-win-store: overnight start persisted");
+        expect(night && night->activeEndMinutes == 6 * 60,
+               "rem-win-store: overnight end persisted");
+        if (!night)
+            return;
+        const QDate day(2026, 11, 2);
+        ReminderItem dueNight = *night;
+        dueNight.lastFiredAt = QDateTime(day, QTime(22, 0));
+        expect(reminderIsDue(dueNight, QDateTime(day, QTime(23, 0))),
+               "rem-win-store: persisted 23:xx due");
+        dueNight.lastFiredAt = QDateTime(day, QTime(0, 0));
+        expect(reminderIsDue(dueNight, QDateTime(day, QTime(1, 0))),
+               "rem-win-store: persisted 01:xx due");
+        dueNight.lastFiredAt = QDateTime(day, QTime(11, 0));
+        expect(!reminderIsDue(dueNight, QDateTime(day, QTime(12, 0))),
+               "rem-win-store: persisted 12:xx gated");
+        expect(store.reminders().size() == 2, "rem-win-store: count");
     }
 
     QString legacyId = QUuid::createUuid().toString(QUuid::WithoutBraces);
