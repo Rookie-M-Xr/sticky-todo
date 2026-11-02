@@ -78,6 +78,9 @@ public:
     bool updateDue(const QString &id, QDate dueDate);
     bool setCompleted(const QString &id, bool completed);
     bool setCompleted(const QString &id, bool completed, QDateTime *completedAt);
+    // TR #60: persist pin on the TodoItem in todos.json (not a second store).
+    // Pin time is kept on re-pin so newest-first order stays stable.
+    bool setTodoPinned(const QString &id, bool pinned);
     bool removeTodo(const QString &id, TodoItem *removed = nullptr, int *removedIndex = nullptr);
     bool restoreTodo(const TodoItem &item, int index = -1);
 

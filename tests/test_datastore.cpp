@@ -643,6 +643,237 @@ void testArchiveCurrentItem()
         pass("archive current item + restore");
 }
 
+void testPinGrouping()
+{
+    const int before = g_failed;
+    const QDate today(2026, 11, 2);
+    const QDateTime t0(today, QTime(8, 0));
+
+    auto makeOpen = [&](const QString &id, const QString &text, QDate due, int createdOffset) {
+        TodoItem item;
+        item.id = id;
+        item.text = text;
+        item.dueDate = due;
+        item.createdAt = t0.addSecs(createdOffset);
+        item.updatedAt = item.createdAt;
+        return item;
+    };
+
+    TodoItem later = makeOpen(QStringLiteral("later-1"), QStringLiteral("later-work"),
+                              today.addDays(20), 0);
+    TodoItem todayItem = makeOpen(QStringLiteral("today-1"), QStringLiteral("today-work"),
+                                  today, 10);
+    TodoItem nodate = makeOpen(QStringLiteral("nodate-1"), QStringLiteral("inbox"), QDate(), 20);
+
+    QVector<TodoGroup> groups = buildGroups({later, todayItem, nodate}, today);
+    expect(!groups.isEmpty() && groups.at(0).id != GroupId::Pinned,
+           "pin-group: no pin group before pin");
+    bool laterInLater = false;
+    for (const TodoGroup &group : groups) {
+        if (group.id != GroupId::Later)
+            continue;
+        for (const TodoItem &item : group.items) {
+            if (item.id == later.id)
+                laterInLater = true;
+        }
+    }
+    expect(laterInLater, "pin-group: unpinned later item in Later");
+
+    later.pinnedAt = t0.addSecs(100);
+    groups = buildGroups({later, todayItem, nodate}, today);
+    expect(!groups.isEmpty() && groups.at(0).id == GroupId::Pinned,
+           "pin-group: pinned group first");
+    expect(groups.at(0).items.size() == 1, "pin-group: one pinned item");
+    expect(groups.at(0).pendingCount == 1, "pin-group: pending 1");
+    expect(groups.at(0).items.at(0).id == later.id, "pin-group: later item lifted");
+    laterInLater = false;
+    for (const TodoGroup &group : groups) {
+        expect(group.id != GroupId::Pinned || group.items.size() == 1,
+               "pin-group: only the pin section holds the pin");
+        if (group.id != GroupId::Later)
+            continue;
+        for (const TodoItem &item : group.items) {
+            if (item.id == later.id)
+                laterInLater = true;
+        }
+    }
+    expect(!laterInLater, "pin-group: pinned later item left Later");
+
+    TodoItem later2 = makeOpen(QStringLiteral("later-2"), QStringLiteral("later-2"),
+                               today.addDays(21), 5);
+    later2.pinnedAt = t0.addSecs(200); // newer pin
+    groups = buildGroups({later, later2, todayItem}, today);
+    expect(groups.at(0).id == GroupId::Pinned && groups.at(0).items.size() == 2,
+           "pin-group: two pins");
+    expect(groups.at(0).items.at(0).id == later2.id, "pin-group: newest pin first");
+    expect(groups.at(0).items.at(1).id == later.id, "pin-group: older pin second");
+
+    TodoItem done = later;
+    done.completed = true;
+    done.completedAt = t0.addSecs(300);
+    groups = buildGroups({done, todayItem}, today);
+    bool sawPinGroup = false;
+    bool foundDone = false;
+    GroupId doneGroup = GroupId::Today;
+    for (const TodoGroup &group : groups) {
+        if (group.id == GroupId::Pinned)
+            sawPinGroup = true;
+        for (const TodoItem &item : group.items) {
+            if (item.id != done.id)
+                continue;
+            foundDone = true;
+            doneGroup = group.id;
+        }
+    }
+    expect(!sawPinGroup, "pin-group: completed pin is not in pin group");
+    expect(foundDone && doneGroup == GroupId::Later,
+           "pin-group: completed pin stays on timeline");
+
+    later.pinnedAt = QDateTime();
+    groups = buildGroups({later, todayItem}, today);
+    bool backInLater = false;
+    for (const TodoGroup &group : groups) {
+        expect(group.id != GroupId::Pinned, "pin-group: unpin drops pin group");
+        if (group.id != GroupId::Later)
+            continue;
+        for (const TodoItem &item : group.items) {
+            if (item.id == later.id)
+                backInLater = true;
+        }
+    }
+    expect(backInLater, "pin-group: unpinned later item returns to Later");
+
+    if (g_failed == before)
+        pass("pin grouping (newest first + unpin restores timeline)");
+}
+
+void testPinPersist()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "pin-store: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    const QDate today = QDate::currentDate();
+    QString pinId;
+    QString otherId;
+    QDateTime pinStamp;
+
+    {
+        DataStore store;
+        expect(store.load(), "pin-store: load");
+        pinId = store.addTodo(QStringLiteral("pin-me"), today.addDays(20));
+        otherId = store.addTodo(QStringLiteral("leave-me"), today);
+        expect(!pinId.isEmpty() && !otherId.isEmpty(), "pin-store: seed ids");
+        expect(!store.setTodoPinned(QString(), true), "pin-store: empty id no-op");
+        expect(!store.setTodoPinned(QStringLiteral("missing-id"), true),
+               "pin-store: missing id no-op");
+        expect(store.setTodoPinned(pinId, true), "pin-store: pin");
+        const TodoItem *pinned = store.findTodo(pinId);
+        expect(pinned != nullptr && pinned->isPinned(), "pin-store: in-memory pinned");
+        expect(store.findTodo(otherId) != nullptr && !store.findTodo(otherId)->isPinned(),
+               "pin-store: other stays unpinned");
+        pinStamp = pinned->pinnedAt;
+        expect(store.setTodoPinned(pinId, true), "pin-store: re-pin is no-op");
+        expect(store.findTodo(pinId)->pinnedAt == pinStamp, "pin-store: pin time stable");
+        expect(store.flush(), "pin-store: flush after pin");
+
+        QFile file(store.todosPath());
+        expect(file.open(QIODevice::ReadOnly), "pin-store: open todos.json");
+        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        file.close();
+        bool sawPinnedAt = false;
+        bool sawEmptyOther = false;
+        for (const QJsonValue &value : doc.object().value(QStringLiteral("todos")).toArray()) {
+            const QJsonObject row = value.toObject();
+            if (row.value(QStringLiteral("id")).toString() == pinId) {
+                sawPinnedAt = !row.value(QStringLiteral("pinnedAt")).toString().isEmpty();
+            } else if (row.value(QStringLiteral("id")).toString() == otherId) {
+                sawEmptyOther = row.value(QStringLiteral("pinnedAt")).toString().isEmpty();
+            }
+        }
+        expect(sawPinnedAt, "pin-store: pinnedAt written");
+        expect(sawEmptyOther, "pin-store: other pinnedAt empty");
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "pin-store: reload");
+        const TodoItem *pinned = store.findTodo(pinId);
+        expect(pinned != nullptr && pinned->isPinned(), "pin-store: restart keeps pin");
+        expect(pinned->pinnedAt == pinStamp, "pin-store: pin time survives restart");
+        expect(store.setTodoPinned(pinId, false), "pin-store: unpin");
+        expect(!store.findTodo(pinId)->isPinned(), "pin-store: unpinned in memory");
+        expect(store.flush(), "pin-store: flush after unpin");
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "pin-store: reload after unpin");
+        expect(store.findTodo(pinId) != nullptr && !store.findTodo(pinId)->isPinned(),
+               "pin-store: restart keeps unpin");
+        expect(store.setTodoPinned(pinId, true), "pin-store: pin again");
+        pinStamp = store.findTodo(pinId)->pinnedAt;
+        expect(store.archiveTodo(pinId), "pin-store: archive pinned item");
+        expect(store.findTodo(pinId) == nullptr, "pin-store: gone from main");
+        expect(store.importAllArchived() == 1, "pin-store: restore from archive");
+        const TodoItem *back = store.findTodo(pinId);
+        expect(back != nullptr && back->isPinned() && back->pinnedAt == pinStamp,
+               "pin-store: archive round-trip keeps pin");
+        expect(store.flush(), "pin-store: flush restored pin");
+    }
+
+    {
+        const QString todosPath = QDir(dataDir).filePath(QStringLiteral("todos.json"));
+        QFile file(todosPath);
+        expect(file.open(QIODevice::ReadOnly), "pin-store: read for legacy");
+        QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+        file.close();
+        QJsonArray todos = root.value(QStringLiteral("todos")).toArray();
+        expect(!todos.isEmpty(), "pin-store: todos present");
+        QJsonObject first = todos.at(0).toObject();
+        first.remove(QStringLiteral("pinnedAt"));
+        todos.replace(0, first);
+        root.insert(QStringLiteral("todos"), todos);
+        expect(file.open(QIODevice::WriteOnly | QIODevice::Truncate),
+               "pin-store: rewrite without pinnedAt");
+        file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+        file.close();
+
+        DataStore store;
+        expect(store.load(), "pin-store: load legacy");
+        const QString legacyId = first.value(QStringLiteral("id")).toString();
+        const TodoItem *legacy = store.findTodo(legacyId);
+        expect(legacy != nullptr && !legacy->isPinned(),
+               "pin-store: missing pinnedAt is unpinned");
+    }
+
+    bool jsonOk = false;
+    QJsonObject legacyObj;
+    legacyObj.insert(QStringLiteral("id"), QStringLiteral("legacy-1"));
+    legacyObj.insert(QStringLiteral("text"), QStringLiteral("old-row"));
+    legacyObj.insert(QStringLiteral("createdAt"),
+                     QDateTime(today, QTime(9, 0)).toString(Qt::ISODateWithMs));
+    legacyObj.insert(QStringLiteral("completed"), false);
+    const TodoItem parsed = TodoItem::fromJson(legacyObj, &jsonOk);
+    expect(jsonOk && !parsed.isPinned(), "pin-json: fromJson without pinnedAt");
+
+    TodoItem stamped;
+    stamped.id = QStringLiteral("stamped");
+    stamped.text = QStringLiteral("has-pin");
+    stamped.createdAt = QDateTime(today, QTime(9, 0));
+    stamped.updatedAt = stamped.createdAt;
+    stamped.pinnedAt = QDateTime(today, QTime(10, 0));
+    bool roundOk = false;
+    const TodoItem round = TodoItem::fromJson(stamped.toJson(), &roundOk);
+    expect(roundOk && round.isPinned() && round.pinnedAt == stamped.pinnedAt,
+           "pin-json: toJson/fromJson pinnedAt");
+
+    if (g_failed == before)
+        pass("pin persist + archive round-trip + legacy");
+}
+
 void testArchiveExpired()
 {
     const int before = g_failed;
@@ -1901,6 +2132,8 @@ int main(int argc, char *argv[])
     testArchiveExpired();
     testArchiveReimport();
     testArchiveCurrentItem();
+    testPinGrouping();
+    testPinPersist();
     testTrayHideHintPersist();
     testPomodoroHelpers();
     testPomodoroDoesNotTouchTodos();

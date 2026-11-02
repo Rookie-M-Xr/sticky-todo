@@ -373,6 +373,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_todosView, &TodoScrollView::textEdited, this, &MainWindow::handleTextEdited);
     connect(m_todosView, &TodoScrollView::deleteRequested, this, &MainWindow::handleDelete);
     connect(m_todosView, &TodoScrollView::archiveRequested, this, &MainWindow::handleArchive);
+    connect(m_todosView, &TodoScrollView::pinToggleRequested, this, &MainWindow::handlePinToggle);
     connect(m_todosView, &TodoScrollView::dateRequested, this,
             [this](const QString &id, const QPoint &pos) { openCalendarForTodo(id, pos); });
     connect(m_todosView, &TodoScrollView::pomodoroToggleRequested, this,
@@ -2598,6 +2599,19 @@ void MainWindow::handleArchive(const QString &id)
     if (!m_store->archiveTodo(id))
         return;
     showToast(QStringLiteral("已归档“%1”").arg(label));
+}
+
+void MainWindow::handlePinToggle(const QString &id)
+{
+    const TodoItem *item = m_store->findTodo(id);
+    if (!item)
+        return;
+    const QString label = elidedOneLine(item->text, 30, Theme::uiFont(12));
+    const bool next = !item->isPinned();
+    if (!m_store->setTodoPinned(id, next))
+        return;
+    showToast(next ? QStringLiteral("已置顶“%1”").arg(label)
+                   : QStringLiteral("已取消置顶“%1”").arg(label));
 }
 
 void MainWindow::handleCompletion(const QString &id, bool completed)
