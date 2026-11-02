@@ -15,7 +15,11 @@ struct TodoItem {
     bool completed = false;
     QDateTime completedAt;
     QDateTime updatedAt;
+    // TR #60: valid pinnedAt = pinned. Incomplete pins sit in GroupId::Pinned
+    // (top of the incomplete list). Multiple pins: newest pinnedAt first.
+    QDateTime pinnedAt;
 
+    bool isPinned() const { return pinnedAt.isValid(); }
     bool isOverdue(QDate today) const {
         return !completed && dueDate.isValid() && dueDate < today;
     }
@@ -95,7 +99,7 @@ QDate reportWeekStart(QDate day);
 QDate reportWeekEnd(QDate day);
 
 enum class GroupId {
-
+    Pinned,
     Overdue,
     Today,
     Tomorrow,
