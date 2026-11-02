@@ -433,3 +433,28 @@ QString pomodoroAfterToggle(const QString &currentId, const QString &requestedId
         return QString();
     return requestedId;
 }
+
+bool pomodoroCountsAsComplete(int remainingSeconds)
+{
+    return remainingSeconds <= 0;
+}
+
+int pomodoroElapsedSeconds(int sessionMinutes, int remainingSeconds)
+{
+    const int total = pomodoroSecondsForMinutes(sessionMinutes);
+    const int left = qMax(0, remainingSeconds);
+    return qMax(0, total - left);
+}
+
+int pomodoroFocusedMinutesFromSeconds(int focusedSeconds)
+{
+    if (focusedSeconds <= 0)
+        return 0;
+    return (focusedSeconds + 30) / 60;
+}
+
+QString formatPomodoroFocusedDuration(int focusedMinutes)
+{
+    const int minutes = qMax(0, focusedMinutes);
+    return QStringLiteral("%1h %2m").arg(minutes / 60).arg(minutes % 60);
+}

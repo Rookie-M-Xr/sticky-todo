@@ -175,6 +175,7 @@ SettingsPage::SettingsPage(DataStore *store, QWidget *parent)
     buildUi();
     refresh();
     connect(m_store, &DataStore::settingsChanged, this, &SettingsPage::refresh);
+    connect(m_store, &DataStore::pomodoroStatsChanged, this, &SettingsPage::refresh);
     connect(m_store, &DataStore::remindersChanged, this, &SettingsPage::rebuildReminderRows);
 }
 
@@ -403,6 +404,41 @@ QWidget *SettingsPage::buildPomodoroCard()
         if (!m_syncing)
             m_store->setPomodoroMinutes(value);
     });
+
+    body->addWidget(new Separator(card));
+
+    m_pomodoroStatsSwitch = new SwitchButton(card);
+    m_pomodoroStatsSwitch->setToolTip(QStringLiteral("关闭后不再累计，已有数字保留"));
+    auto *statsRow = new SettingRow(QStringLiteral("番茄统计"),
+                                    QStringLiteral("默认关；开启后才累计完成次数和专注时长"),
+                                    m_pomodoroStatsSwitch, card);
+    body->addWidget(statsRow);
+    connect(m_pomodoroStatsSwitch, &QAbstractButton::clicked, this, [this](bool on) {
+        if (!m_syncing)
+            m_store->setPomodoroStatsEnabled(on);
+    });
+
+    body->addWidget(new Separator(card));
+
+    auto makeStatsValue = [card]() {
+        auto *label = new QLabel(QStringLiteral("—"), card);
+        label->setFont(Theme::uiFont(12, QFont::DemiBold));
+        label->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(Theme::Ink.name()));
+        label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        label->setMinimumWidth(64);
+        return label;
+    };
+    m_pomodoroCompletedLabel = makeStatsValue();
+    body->addWidget(new SettingRow(QStringLiteral("累计完成"),
+                                   QStringLiteral("仅倒计时到时 +1"),
+                                   m_pomodoroCompletedLabel, card));
+
+    body->addWidget(new Separator(card));
+
+    m_pomodoroFocusedLabel = makeStatsValue();
+    body->addWidget(new SettingRow(QStringLiteral("累计专注"),
+                                   QStringLiteral("到时按设定；中途停按已专注取整"),
+                                   m_pomodoroFocusedLabel, card));
     return card;
 }
 
@@ -825,6 +861,13 @@ void SettingsPage::refresh()
         m_retentionSpin->setValue(settings.retentionDays);
     if (m_pomodoroSpin)
         m_pomodoroSpin->setValue(settings.pomodoroMinutes);
+    if (m_pomodoroStatsSwitch)
+        m_pomodoroStatsSwitch->setChecked(settings.pomodoroStatsEnabled);
+    const PomodoroStats &stats = m_store->pomodoroStats();
+    if (m_pomodoroCompletedLabel)
+        m_pomodoroCompletedLabel->setText(QStringLiteral("%1 次").arg(stats.completedCount));
+    if (m_pomodoroFocusedLabel)
+        m_pomodoroFocusedLabel->setText(formatPomodoroFocusedDuration(stats.focusedMinutes));
 
     rebuildReminderRows();
 

@@ -20,6 +20,7 @@ qrc_*.cpp
 **/config/todos.json
 **/config/settings.json
 **/config/reminders.json
+**/config/pomodoro_stats.json
 **/config/*.bak
 **/config/*.corrupt-*
 

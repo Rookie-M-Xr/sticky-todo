@@ -33,7 +33,15 @@ struct AppSettings {
     // Default focus length for newly started clocks (TR #31). Running clocks keep
     // the deadline they captured at start.
     int pomodoroMinutes = kPomodoroDefaultMinutes;
+    // TR #35: opt-in cumulative pomodoro stats. Default off — running a clock
+    // must not write stats until the user enables this.
+    bool pomodoroStatsEnabled = false;
     QHash<QString, bool> groupExpanded;
+};
+
+struct PomodoroStats {
+    int completedCount = 0;
+    int focusedMinutes = 0;
 };
 
 struct ArchivedEntry {
@@ -59,6 +67,8 @@ public:
     QString settingsPath() const;
     QString archivePath() const;
     QString remindersPath() const;
+    QString pomodoroStatsPath() const;
+    const PomodoroStats &pomodoroStats() const { return m_pomodoroStats; }
     QStringList takeNotices();
 
     const TodoItem *findTodo(const QString &id) const;
@@ -134,6 +144,11 @@ public:
     void setGlobalHotkey(const QString &hotkey);
     void setTrayHideHintShown(bool shown);
     void setPomodoroMinutes(int minutes);
+    void setPomodoroStatsEnabled(bool on);
+    // No-op when stats are disabled. Complete: +1 count and the session minutes.
+    // Interrupt: add rounded focused minutes so far; count unchanged.
+    void recordPomodoroCompleted(int sessionMinutes);
+    void recordPomodoroInterrupted(int focusedSeconds);
     void setWindowState(const QRect &rect, const QString &screenName, int dockSide,
                         bool collapsed, bool pinned);
 
@@ -141,6 +156,7 @@ signals:
     void todosChanged();
     void settingsChanged();
     void remindersChanged();
+    void pomodoroStatsChanged();
     void errorOccurred(const QString &message);
     void dailyReportsChanged();
     void weeklyReportsChanged();
@@ -160,6 +176,10 @@ private:
     void scheduleRemindersSave(int delayMs);
     void saveRemindersNow();
     bool reloadReminderBackup(QString *warning);
+    void loadPomodoroStats();
+    void schedulePomodoroStatsSave(int delayMs);
+    void savePomodoroStatsNow();
+    bool reloadPomodoroStatsBackup(QString *warning);
     void preserveCorruptFile(const QString &path);
     bool reloadTodoBackup(QString *warning);
     bool reloadSettingsBackup(QString *warning);
@@ -195,6 +215,7 @@ private:
 
     QVector<TodoItem> m_todos;
     QVector<ReminderItem> m_reminders;
+    PomodoroStats m_pomodoroStats;
     AppSettings m_settings;
     QString m_dataDir;
     QStringList m_notices;
@@ -202,11 +223,13 @@ private:
     QTimer m_todoSaveTimer;
     QTimer m_settingsSaveTimer;
     QTimer m_reminderSaveTimer;
+    QTimer m_pomodoroStatsSaveTimer;
     bool m_loaded = false;
     bool m_firstRun = false;
     bool m_todosDirty = false;
     bool m_settingsDirty = false;
     bool m_remindersDirty = false;
+    bool m_pomodoroStatsDirty = false;
     QMap<QString, QVector<DailySnapshot>> m_dailyByDate; // key = yyyy-MM-dd
     QMap<QString, QVector<DailySnapshot>> m_weeklyByKey; // key = yyyy-Www
     QMap<QString, QVector<DailySnapshot>> m_monthlyByKey; // key = yyyy-MM

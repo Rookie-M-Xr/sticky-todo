@@ -2617,6 +2617,8 @@ void MainWindow::startPomodoro(const QString &id)
 {
     if (id.isEmpty() || !m_store || !m_store->findTodo(id))
         return;
+    if (!m_pomodoroId.isEmpty())
+        recordCurrentPomodoro();
     m_pomodoroId = id;
     m_pomodoroSessionMinutes = clampPomodoroMinutes(m_store->settings().pomodoroMinutes);
     m_pomodoroDeadline = QDateTime::currentDateTime().addSecs(
@@ -2631,9 +2633,22 @@ void MainWindow::startPomodoro(const QString &id)
     updateHeader();
 }
 
+void MainWindow::recordCurrentPomodoro()
+{
+    if (!m_store || m_pomodoroId.isEmpty())
+        return;
+    if (pomodoroCountsAsComplete(pomodoroSecondsLeft()))
+        m_store->recordPomodoroCompleted(m_pomodoroSessionMinutes);
+    else
+        m_store->recordPomodoroInterrupted(
+            pomodoroElapsedSeconds(m_pomodoroSessionMinutes, pomodoroSecondsLeft()));
+}
+
 void MainWindow::stopPomodoro()
 {
     const bool wasRunning = !m_pomodoroId.isEmpty();
+    if (wasRunning)
+        recordCurrentPomodoro();
     m_pomodoroId.clear();
     m_pomodoroDeadline = QDateTime();
     m_pomodoroSessionMinutes = kPomodoroDefaultMinutes;
