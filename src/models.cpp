@@ -392,25 +392,44 @@ QDateTime reminderAnchor(const ReminderItem &item)
     return {};
 }
 
-QDateTime reminderNextDue(const ReminderItem &item)
+QDateTime reminderNextDue(const ReminderItem &item, const QDateTime &snoozeUntil)
 {
+    if (snoozeUntil.isValid())
+        return snoozeUntil;
     const QDateTime anchor = reminderAnchor(item);
     if (!anchor.isValid())
         return {};
     return anchor.addSecs(static_cast<qint64>(clampReminderInterval(item.intervalMinutes)) * 60);
 }
 
-bool reminderIsDue(const ReminderItem &item, const QDateTime &now)
+bool reminderIsDue(const ReminderItem &item, const QDateTime &now, const QDateTime &snoozeUntil)
 {
     if (!item.enabled || item.text.trimmed().isEmpty())
         return false;
     const QDateTime origin = now.isValid() ? now : QDateTime::currentDateTime();
     if (!reminderInActiveWindow(item, origin))
         return false;
-    const QDateTime due = reminderNextDue(item);
+    const QDateTime due = reminderNextDue(item, snoozeUntil);
     if (!due.isValid())
         return false;
     return due <= origin;
+}
+
+bool reminderSnoozeMinutesValid(int minutes)
+{
+    return minutes == kReminderSnoozeMinutes5
+        || minutes == kReminderSnoozeMinutes10
+        || minutes == kReminderSnoozeMinutes15;
+}
+
+QDateTime reminderSnoozeUntil(const QDateTime &from, int minutes)
+{
+    if (!reminderSnoozeMinutesValid(minutes))
+        return {};
+    const QDateTime origin = from.isValid() ? from : QDateTime::currentDateTime();
+    if (!origin.isValid())
+        return {};
+    return origin.addSecs(static_cast<qint64>(minutes) * 60);
 }
 
 QJsonObject ReminderItem::toJson() const
