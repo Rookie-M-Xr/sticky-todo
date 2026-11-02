@@ -72,6 +72,9 @@ private:
     TextAction *m_importAllArchivedAction = nullptr;
     TextAction *m_importPickArchivedAction = nullptr;
     QSpinBox *m_pomodoroSpin = nullptr;
+    SwitchButton *m_pomodoroStatsSwitch = nullptr;
+    QLabel *m_pomodoroCompletedLabel = nullptr;
+    QLabel *m_pomodoroFocusedLabel = nullptr;
     QSpinBox *m_reminderInterval = nullptr;
     QLineEdit *m_reminderText = nullptr;
     TextAction *m_reminderAddAction = nullptr;

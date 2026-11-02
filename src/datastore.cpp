@@ -44,12 +44,14 @@ DataStore::DataStore(QObject *parent)
     m_todoSaveTimer.setSingleShot(true);
     m_settingsSaveTimer.setSingleShot(true);
     m_reminderSaveTimer.setSingleShot(true);
+    m_pomodoroStatsSaveTimer.setSingleShot(true);
     m_dailySaveTimer.setSingleShot(true);
     m_weeklySaveTimer.setSingleShot(true);
     m_monthlySaveTimer.setSingleShot(true);
     connect(&m_todoSaveTimer, &QTimer::timeout, this, &DataStore::saveTodosNow);
     connect(&m_settingsSaveTimer, &QTimer::timeout, this, &DataStore::saveSettingsNow);
     connect(&m_reminderSaveTimer, &QTimer::timeout, this, &DataStore::saveRemindersNow);
+    connect(&m_pomodoroStatsSaveTimer, &QTimer::timeout, this, &DataStore::savePomodoroStatsNow);
     connect(&m_dailySaveTimer, &QTimer::timeout, this, [this]() { saveDailyNow(); });
     connect(&m_weeklySaveTimer, &QTimer::timeout, this, [this]() { saveWeeklyNow(); });
     connect(&m_monthlySaveTimer, &QTimer::timeout, this, [this]() { saveMonthlyNow(); });
@@ -87,6 +89,11 @@ QString DataStore::archivePath() const
 QString DataStore::remindersPath() const
 {
     return QDir(m_dataDir).filePath(QStringLiteral("reminders.json"));
+}
+
+QString DataStore::pomodoroStatsPath() const
+{
+    return QDir(m_dataDir).filePath(QStringLiteral("pomodoro_stats.json"));
 }
 
 QString DataStore::dailyReportsPath() const
@@ -161,6 +168,7 @@ bool DataStore::load()
     loadTodos();
     loadSettings();
     loadReminders();
+    loadPomodoroStats();
     loadDailyReports();
     loadWeeklyReports();
     loadMonthlyReports();
@@ -174,6 +182,7 @@ bool DataStore::flush()
     m_todoSaveTimer.stop();
     m_settingsSaveTimer.stop();
     m_reminderSaveTimer.stop();
+    m_pomodoroStatsSaveTimer.stop();
     m_dailySaveTimer.stop();
     m_weeklySaveTimer.stop();
     m_monthlySaveTimer.stop();
@@ -189,6 +198,10 @@ bool DataStore::flush()
     if (m_remindersDirty) {
         saveRemindersNow();
         ok = ok && !m_remindersDirty;
+    }
+    if (m_pomodoroStatsDirty) {
+        savePomodoroStatsNow();
+        ok = ok && !m_pomodoroStatsDirty;
     }
     if (m_dailyDirty) {
         saveDailyNow();
@@ -437,6 +450,38 @@ void DataStore::setPomodoroMinutes(int minutes)
     m_settings.pomodoroMinutes = next;
     scheduleSettingsSave(0);
     emit settingsChanged();
+}
+
+void DataStore::setPomodoroStatsEnabled(bool on)
+{
+    if (m_settings.pomodoroStatsEnabled == on)
+        return;
+    m_settings.pomodoroStatsEnabled = on;
+    scheduleSettingsSave(0);
+    emit settingsChanged();
+}
+
+void DataStore::recordPomodoroCompleted(int sessionMinutes)
+{
+    if (!m_settings.pomodoroStatsEnabled)
+        return;
+    const int minutes = clampPomodoroMinutes(sessionMinutes);
+    ++m_pomodoroStats.completedCount;
+    m_pomodoroStats.focusedMinutes += minutes;
+    schedulePomodoroStatsSave(0);
+    emit pomodoroStatsChanged();
+}
+
+void DataStore::recordPomodoroInterrupted(int focusedSeconds)
+{
+    if (!m_settings.pomodoroStatsEnabled)
+        return;
+    const int minutes = pomodoroFocusedMinutesFromSeconds(focusedSeconds);
+    if (minutes <= 0)
+        return;
+    m_pomodoroStats.focusedMinutes += minutes;
+    schedulePomodoroStatsSave(0);
+    emit pomodoroStatsChanged();
 }
 
 void DataStore::setShowDailyReport(bool on)
@@ -888,6 +933,17 @@ void DataStore::scheduleRemindersSave(int delayMs)
     m_reminderSaveTimer.start(delayMs);
 }
 
+void DataStore::schedulePomodoroStatsSave(int delayMs)
+{
+    m_pomodoroStatsDirty = true;
+    if (delayMs <= 0) {
+        m_pomodoroStatsSaveTimer.stop();
+        savePomodoroStatsNow();
+        return;
+    }
+    m_pomodoroStatsSaveTimer.start(delayMs);
+}
+
 void DataStore::saveTodosNow()
 {
     m_todoSaveTimer.stop();
@@ -905,6 +961,27 @@ void DataStore::saveTodosNow()
         m_lastError.clear();
     } else {
         const QString message = QStringLiteral("待办保存失败：%1").arg(error);
+        m_lastError = message;
+        addNotice(message);
+        emit errorOccurred(message);
+    }
+}
+
+void DataStore::savePomodoroStatsNow()
+{
+    m_pomodoroStatsSaveTimer.stop();
+    if (!m_pomodoroStatsDirty)
+        return;
+    QJsonObject root;
+    root.insert(QStringLiteral("schemaVersion"), kSchemaVersion);
+    root.insert(QStringLiteral("completedCount"), m_pomodoroStats.completedCount);
+    root.insert(QStringLiteral("focusedMinutes"), m_pomodoroStats.focusedMinutes);
+    QString error;
+    if (writeJson(pomodoroStatsPath(), root, &error)) {
+        m_pomodoroStatsDirty = false;
+        m_lastError.clear();
+    } else {
+        const QString message = QStringLiteral("番茄统计保存失败：%1").arg(error);
         m_lastError = message;
         addNotice(message);
         emit errorOccurred(message);
@@ -956,6 +1033,7 @@ void DataStore::saveSettingsNow()
     root.insert(QStringLiteral("globalHotkey"), m_settings.globalHotkey);
     root.insert(QStringLiteral("trayHideHintShown"), m_settings.trayHideHintShown);
     root.insert(QStringLiteral("pomodoroMinutes"), m_settings.pomodoroMinutes);
+    root.insert(QStringLiteral("pomodoroStatsEnabled"), m_settings.pomodoroStatsEnabled);
     root.insert(QStringLiteral("draftDue"),
                 m_settings.draftDue.isValid() ? m_settings.draftDue.toString(Qt::ISODate) : QString());
 
@@ -1154,6 +1232,7 @@ void DataStore::loadSettings()
         settings->trayHideHintShown = root.value(QStringLiteral("trayHideHintShown")).toBool(false);
         settings->pomodoroMinutes = clampPomodoroMinutes(
             root.value(QStringLiteral("pomodoroMinutes")).toInt(kPomodoroDefaultMinutes));
+        settings->pomodoroStatsEnabled = root.value(QStringLiteral("pomodoroStatsEnabled")).toBool(false);
         const QString dueText = root.value(QStringLiteral("draftDue")).toString();
         settings->draftDue = QDate::fromString(dueText, Qt::ISODate);
         if (!settings->draftDue.isValid())
@@ -1282,6 +1361,57 @@ void DataStore::loadReminders()
     } else {
         m_reminders.clear();
         scheduleRemindersSave(0);
+    }
+}
+
+void DataStore::loadPomodoroStats()
+{
+    m_pomodoroStats = PomodoroStats();
+    const QString path = pomodoroStatsPath();
+    if (!QFileInfo::exists(path))
+        return;
+
+    auto readStatsFile = [](const QString &filePath, PomodoroStats *stats, QString *why) {
+        QFile file(filePath);
+        if (!file.open(QIODevice::ReadOnly)) {
+            if (why)
+                *why = file.errorString();
+            return false;
+        }
+        QJsonParseError parseError;
+        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+        if (parseError.error != QJsonParseError::NoError) {
+            if (why)
+                *why = parseError.errorString();
+            return false;
+        }
+        if (!doc.isObject()) {
+            if (why)
+                *why = QStringLiteral("根节点不是对象");
+            return false;
+        }
+        const QJsonObject root = doc.object();
+        stats->completedCount = qMax(0, root.value(QStringLiteral("completedCount")).toInt(0));
+        stats->focusedMinutes = qMax(0, root.value(QStringLiteral("focusedMinutes")).toInt(0));
+        return true;
+    };
+
+    PomodoroStats parsed;
+    QString problem;
+    if (readStatsFile(path, &parsed, &problem)) {
+        m_pomodoroStats = parsed;
+        return;
+    }
+
+    addNotice(QStringLiteral("番茄统计读取失败（%1），正在尝试备份。").arg(problem));
+    preserveCorruptFile(path);
+    QString backupWarning;
+    if (reloadPomodoroStatsBackup(&backupWarning)) {
+        addNotice(backupWarning);
+        schedulePomodoroStatsSave(0);
+    } else {
+        m_pomodoroStats = PomodoroStats();
+        schedulePomodoroStatsSave(0);
     }
 }
 
@@ -1424,6 +1554,28 @@ bool DataStore::reloadReminderBackup(QString *warning)
     m_reminders = items;
     if (warning)
         *warning = QStringLiteral("已从上一份备份恢复 %1 条提醒。").arg(items.size());
+    return true;
+}
+
+bool DataStore::reloadPomodoroStatsBackup(QString *warning)
+{
+    const QString backup = pomodoroStatsPath() + QStringLiteral(".bak");
+    if (!QFileInfo::exists(backup))
+        return false;
+
+    QFile file(backup);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject())
+        return false;
+
+    const QJsonObject root = doc.object();
+    m_pomodoroStats.completedCount = qMax(0, root.value(QStringLiteral("completedCount")).toInt(0));
+    m_pomodoroStats.focusedMinutes = qMax(0, root.value(QStringLiteral("focusedMinutes")).toInt(0));
+    if (warning)
+        *warning = QStringLiteral("已从上一份备份恢复番茄统计。");
     return true;
 }
 

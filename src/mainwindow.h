@@ -133,6 +133,7 @@ private:
     void handlePomodoroToggle(const QString &id);
     void startPomodoro(const QString &id);
     void stopPomodoro();
+    void recordCurrentPomodoro();
     void onPomodoroTick();
     void applyPomodoroToView();
     void notifyPomodoroFinished(const QString &text, int minutes);
