@@ -151,6 +151,8 @@ public:
     // Interrupt: add rounded focused minutes so far; count unchanged.
     void recordPomodoroCompleted(int sessionMinutes);
     void recordPomodoroInterrupted(int focusedSeconds);
+    // Both counters to 0 and persist. Does not change pomodoroStatsEnabled.
+    void clearPomodoroStats();
     void setWindowState(const QRect &rect, const QString &screenName, int dockSide,
                         bool collapsed, bool pinned);
 

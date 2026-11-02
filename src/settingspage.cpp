@@ -477,6 +477,23 @@ QWidget *SettingsPage::buildPomodoroCard()
     body->addWidget(new SettingRow(QStringLiteral("累计专注"),
                                    QStringLiteral("到时按设定；中途停按已专注取整"),
                                    m_pomodoroFocusedLabel, card));
+
+    body->addWidget(new Separator(card));
+
+    auto *clearAction = new TextAction(QStringLiteral("清零"), card);
+    clearAction->setColors(Theme::InkSoft, Theme::Ink);
+    clearAction->setFont(Theme::uiFont(11, QFont::DemiBold));
+    clearAction->setToolTip(QStringLiteral("将累计完成次数和专注时长归零"));
+    body->addWidget(new SettingRow(QStringLiteral("清零统计"),
+                                   QStringLiteral("完成次数和专注时长一并归零，开关不变"),
+                                   clearAction, card));
+    connect(clearAction, &QAbstractButton::clicked, this, [this] {
+        if (!confirmIrreversible(this, QStringLiteral("清零番茄统计"),
+                                 QStringLiteral("将累计完成次数和专注时长归零。开关状态不变。此操作不可撤销。")))
+            return;
+        m_store->clearPomodoroStats();
+        emit messageRequested(QStringLiteral("已清零"));
+    });
     return card;
 }
 
