@@ -1,6 +1,7 @@
 #pragma once
 
 #include "icons.h"
+#include "models.h"
 
 #include <QAbstractButton>
 #include <QColor>
@@ -133,6 +134,7 @@ public:
     explicit PomodoroChip(QWidget *parent = nullptr);
 
     void setState(bool active, int remainingSeconds);
+    void setDefaultMinutes(int minutes);
     bool isActive() const { return m_active; }
     QSize sizeHint() const override;
 
@@ -146,6 +148,7 @@ private:
 
     bool m_active = false;
     int m_remaining = 0;
+    int m_defaultMinutes = kPomodoroDefaultMinutes;
     bool m_hover = false;
 };
 

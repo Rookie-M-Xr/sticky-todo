@@ -23,6 +23,7 @@ public:
     const TodoItem &item() const { return m_item; }
     void setItem(const TodoItem &item);
     void setPomodoro(bool active, int remainingSeconds);
+    void setPomodoroDefaultMinutes(int minutes);
     void startEditing();
     bool isEditing() const { return m_editing; }
 
@@ -68,6 +69,7 @@ private:
     PomodoroChip *m_pomodoroChip = nullptr;
     bool m_pomodoroActive = false;
     int m_pomodoroRemaining = 0;
+    int m_pomodoroDefaultMinutes = kPomodoroDefaultMinutes;
     int m_lineCount = 1;
     bool m_hover = false;
     bool m_editing = false;
@@ -137,6 +139,7 @@ public:
 
     void refresh(const QVector<TodoGroup> &groups, const QString &search);
     void setPomodoro(const QString &id, int remainingSeconds);
+    void setPomodoroDefaultMinutes(int minutes);
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
@@ -156,6 +159,7 @@ private:
     void showEmptyState(bool searching);
     void connectSection(GroupSection *section);
 
+    int m_pomodoroDefaultMinutes = kPomodoroDefaultMinutes;
     DataStore *m_store = nullptr;
     QScrollArea *m_scroll = nullptr;
     QWidget *m_content = nullptr;
