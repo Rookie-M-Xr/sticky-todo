@@ -565,6 +565,83 @@ void testArchiveReimport()
         pass("archive re-import + conflict id + per-index");
 }
 
+void testArchiveCurrentItem()
+{
+    const int before = g_failed;
+
+    {
+        const QString dataDir = makeDataDir();
+        expect(!dataDir.isEmpty(), "row-archive: data dir");
+        if (dataDir.isEmpty())
+            return;
+
+        DataStore store;
+        expect(store.load(), "row-archive: load");
+        const QDate due = QDate::currentDate().addDays(2);
+        const QString openId = store.addTodo(QStringLiteral("hide-for-now"), due);
+        const QString stayId = store.addTodo(QStringLiteral("stay-on-list"), QDate());
+        expect(!openId.isEmpty() && !stayId.isEmpty(), "row-archive: seed ids");
+        expect(!store.archiveTodo(QString()), "row-archive: empty id no-op");
+        expect(!store.archiveTodo(QStringLiteral("missing-id")), "row-archive: missing id no-op");
+        expect(store.archiveTodo(openId), "row-archive: archive open item");
+        expect(store.findTodo(openId) == nullptr, "row-archive: gone from main");
+        expect(store.findTodo(stayId) != nullptr, "row-archive: other stays");
+        const QVector<ArchivedEntry> listed = store.listArchived();
+        expect(listed.size() == 1, "row-archive: one in archive");
+        if (!listed.isEmpty()) {
+            expect(listed.at(0).item.id == openId, "row-archive: id intact");
+            expect(listed.at(0).item.text == QStringLiteral("hide-for-now"), "row-archive: text intact");
+            expect(listed.at(0).item.dueDate == due, "row-archive: due intact");
+            expect(!listed.at(0).item.completed, "row-archive: still incomplete");
+            expect(!listed.at(0).archivedAt.isEmpty(), "row-archive: archivedAt set");
+        }
+        expect(store.importAllArchived() == 1, "row-archive: restore");
+        const TodoItem *back = store.findTodo(openId);
+        expect(back != nullptr, "row-archive: back with same id");
+        if (back) {
+            expect(back->text == QStringLiteral("hide-for-now"), "row-archive: restored text");
+            expect(back->dueDate == due, "row-archive: restored due");
+            expect(!back->completed, "row-archive: restored still open");
+        }
+        expect(store.listArchived().isEmpty(), "row-archive: archive emptied");
+    }
+
+    {
+        const QString dataDir = makeDataDir();
+        expect(!dataDir.isEmpty(), "row-archive-done: data dir");
+        if (dataDir.isEmpty())
+            return;
+
+        DataStore store;
+        expect(store.load(), "row-archive-done: load");
+        TodoItem done = makeCompleted(QStringLiteral("done-hide"), 3);
+        const QString doneId = done.id;
+        TodoItem openItem;
+        openItem.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        openItem.text = QStringLiteral("open-keep");
+        openItem.createdAt = QDateTime::currentDateTime();
+        openItem.updatedAt = openItem.createdAt;
+        expect(store.restoreTodo(done), "row-archive-done: seed done");
+        expect(store.restoreTodo(openItem), "row-archive-done: seed open");
+        expect(store.archiveTodo(doneId), "row-archive-done: archive completed");
+        expect(store.findTodo(doneId) == nullptr, "row-archive-done: done gone");
+        expect(store.findTodo(openItem.id) != nullptr, "row-archive-done: open stays");
+        expect(store.archiveCompletedOlderThan(30) == 0, "row-archive-done: open not batch-archived");
+        expect(store.findTodo(openItem.id) != nullptr, "row-archive-done: open still live");
+        const QVector<ArchivedEntry> listed = store.listArchived();
+        expect(listed.size() == 1, "row-archive-done: only the row");
+        const int restoreIdx = listed.isEmpty() ? -1 : listed.at(0).index;
+        expect(store.importArchived(QVector<int>{restoreIdx}) == 1,
+               "row-archive-done: pick restore");
+        const TodoItem *back = store.findTodo(doneId);
+        expect(back != nullptr && back->completed, "row-archive-done: completed restored");
+        expect(store.listArchived().isEmpty(), "row-archive-done: archive emptied");
+    }
+
+    if (g_failed == before)
+        pass("archive current item + restore");
+}
+
 void testArchiveExpired()
 {
     const int before = g_failed;
@@ -1615,6 +1692,7 @@ int main(int argc, char *argv[])
     testWeeklyMonthlySnapshots();
     testArchiveExpired();
     testArchiveReimport();
+    testArchiveCurrentItem();
     testTrayHideHintPersist();
     testPomodoroHelpers();
     testPomodoroDoesNotTouchTodos();

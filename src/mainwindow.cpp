@@ -370,6 +370,7 @@ MainWindow::MainWindow(QWidget *parent)
             &MainWindow::handleCompletion);
     connect(m_todosView, &TodoScrollView::textEdited, this, &MainWindow::handleTextEdited);
     connect(m_todosView, &TodoScrollView::deleteRequested, this, &MainWindow::handleDelete);
+    connect(m_todosView, &TodoScrollView::archiveRequested, this, &MainWindow::handleArchive);
     connect(m_todosView, &TodoScrollView::dateRequested, this,
             [this](const QString &id, const QPoint &pos) { openCalendarForTodo(id, pos); });
     connect(m_todosView, &TodoScrollView::pomodoroToggleRequested, this,
@@ -2576,6 +2577,19 @@ void MainWindow::handleDelete(const QString &id)
                       showToast(QStringLiteral("恢复失败，原条目可能已存在。"));
               },
               7000);
+}
+
+void MainWindow::handleArchive(const QString &id)
+{
+    if (id == m_pomodoroId)
+        stopPomodoro();
+    const TodoItem *item = m_store->findTodo(id);
+    if (!item)
+        return;
+    const QString label = elidedOneLine(item->text, 30, Theme::uiFont(12));
+    if (!m_store->archiveTodo(id))
+        return;
+    showToast(QStringLiteral("已归档“%1”").arg(label));
 }
 
 void MainWindow::handleCompletion(const QString &id, bool completed)

@@ -612,7 +612,7 @@ int DataStore::archiveThenRemoveMatching(const std::function<bool(const TodoItem
     QVector<TodoItem> matched;
     matched.reserve(m_todos.size());
     for (const TodoItem &item : std::as_const(m_todos)) {
-        if (item.completed && pred(item))
+        if (pred(item))
             matched.append(item);
     }
     if (matched.isEmpty())
@@ -663,13 +663,20 @@ int DataStore::archiveCompletedOlderThan(int days)
         return 0;
     const QDateTime now = QDateTime::currentDateTime();
     return archiveThenRemoveMatching([&](const TodoItem &item) {
-        return isCompletedOlderThan(item, days, now);
+        return item.completed && isCompletedOlderThan(item, days, now);
     });
 }
 
 int DataStore::archiveAllCompleted()
 {
-    return archiveThenRemoveMatching([](const TodoItem &) { return true; });
+    return archiveThenRemoveMatching([](const TodoItem &item) { return item.completed; });
+}
+
+bool DataStore::archiveTodo(const QString &id)
+{
+    if (id.isEmpty())
+        return false;
+    return archiveThenRemoveMatching([&](const TodoItem &item) { return item.id == id; }) == 1;
 }
 
 QVector<ArchivedEntry> DataStore::listArchived() const

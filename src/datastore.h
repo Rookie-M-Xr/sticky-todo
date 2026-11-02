@@ -89,6 +89,8 @@ public:
     // Append matching completed items to todos-archive.json, then remove from live store. Returns count.
     int archiveCompletedOlderThan(int days);
     int archiveAllCompleted();
+    // Move one live item (complete or not) into todos-archive.json. Same file format and restore path.
+    bool archiveTodo(const QString &id);
 
     // Read todos-archive.json (empty if missing/unreadable). Indices match current file order.
     QVector<ArchivedEntry> listArchived() const;

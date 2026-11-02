@@ -522,6 +522,8 @@ void TodoRow::openContextMenu(const QPoint &globalPos)
         makeIcon(AppIcon::Check, 14, Theme::AccentDark),
         m_item.completed ? QStringLiteral("恢复为未完成") : QStringLiteral("标记为已完成"));
     menu.addSeparator();
+    QAction *archiveAction = menu.addAction(makeIcon(AppIcon::External, 14, Theme::InkSoft),
+                                            QStringLiteral("归档"));
     QAction *deleteAction = menu.addAction(makeIcon(AppIcon::Trash, 14, Theme::Danger),
                                            QStringLiteral("删除待办"));
 
@@ -536,6 +538,8 @@ void TodoRow::openContextMenu(const QPoint &globalPos)
         emit pomodoroToggleRequested(m_item.id);
     else if (chosen == toggleAction)
         emit completionRequested(m_item.id, !m_item.completed);
+    else if (chosen == archiveAction)
+        emit archiveRequested(m_item.id);
     else if (chosen == deleteAction)
         emit deleteRequested(m_item.id);
 }
@@ -760,6 +764,7 @@ GroupSection::GroupSection(const TodoGroup &group, bool expanded, QWidget *paren
         connect(row, &TodoRow::deleteRequested, this, &GroupSection::deleteRequested);
         connect(row, &TodoRow::dateRequested, this, &GroupSection::dateRequested);
         connect(row, &TodoRow::pomodoroToggleRequested, this, &GroupSection::pomodoroToggleRequested);
+        connect(row, &TodoRow::archiveRequested, this, &GroupSection::archiveRequested);
         m_contentLayout->addWidget(row);
     }
     root->addWidget(m_content);
@@ -949,6 +954,7 @@ void TodoScrollView::connectSection(GroupSection *section)
     connect(section, &GroupSection::dateRequested, this, &TodoScrollView::dateRequested);
     connect(section, &GroupSection::pomodoroToggleRequested, this,
             &TodoScrollView::pomodoroToggleRequested);
+    connect(section, &GroupSection::archiveRequested, this, &TodoScrollView::archiveRequested);
     connect(section, &GroupSection::expansionChanged, this, &TodoScrollView::groupExpansionChanged);
 }
 
