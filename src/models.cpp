@@ -527,6 +527,16 @@ QString formatPomodoroClock(int remainingSeconds)
         .arg(seconds, 2, 10, QChar(u'0'));
 }
 
+QString formatPomodoroPauseHint(int remainingSeconds)
+{
+    return QStringLiteral("暂停番茄钟  %1").arg(formatPomodoroClock(remainingSeconds));
+}
+
+QString formatPomodoroResumeHint(int remainingSeconds)
+{
+    return QStringLiteral("继续番茄钟  %1").arg(formatPomodoroClock(remainingSeconds));
+}
+
 int pomodoroRemainingSeconds(const QDateTime &deadline, const QDateTime &now)
 {
     if (!deadline.isValid())
@@ -542,6 +552,42 @@ QString pomodoroAfterToggle(const QString &currentId, const QString &requestedId
     if (currentId == requestedId)
         return QString();
     return requestedId;
+}
+
+PomodoroClickAction pomodoroOnChipClick(const QString &currentId, bool paused,
+                                        const QString &requestedId)
+{
+    if (requestedId.isEmpty())
+        return PomodoroClickAction::Ignore;
+    if (currentId.isEmpty())
+        return PomodoroClickAction::Start;
+    if (currentId == requestedId)
+        return paused ? PomodoroClickAction::Resume : PomodoroClickAction::Pause;
+    if (paused)
+        return PomodoroClickAction::Ignore;
+    return PomodoroClickAction::Start;
+}
+
+int pomodoroFrozenSeconds(int remainingSeconds)
+{
+    return qMax(0, remainingSeconds);
+}
+
+QDateTime pomodoroResumeDeadline(int remainingSeconds, const QDateTime &now)
+{
+    const int left = pomodoroFrozenSeconds(remainingSeconds);
+    const QDateTime origin = now.isValid() ? now : QDateTime::currentDateTime();
+    if (!origin.isValid() || left <= 0)
+        return {};
+    return origin.addSecs(left);
+}
+
+int pomodoroSessionSecondsLeft(const QDateTime &deadline, bool paused, int pausedRemaining,
+                               const QDateTime &now)
+{
+    if (paused)
+        return pomodoroFrozenSeconds(pausedRemaining);
+    return pomodoroRemainingSeconds(deadline, now);
 }
 
 bool pomodoroCountsAsComplete(int remainingSeconds)

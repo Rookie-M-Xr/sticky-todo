@@ -755,6 +755,53 @@ void testPomodoroHelpers()
     expect(pomodoroAfterToggle(QStringLiteral("a"), QString()).isEmpty() == false,
            "pomo: empty request keeps current");
 
+    expect(pomodoroOnChipClick(QString(), false, QStringLiteral("a")) == PomodoroClickAction::Start,
+           "pomo: idle chip starts");
+    expect(pomodoroOnChipClick(QStringLiteral("a"), false, QStringLiteral("a"))
+               == PomodoroClickAction::Pause,
+           "pomo: running same id pauses");
+    expect(pomodoroOnChipClick(QStringLiteral("a"), true, QStringLiteral("a"))
+               == PomodoroClickAction::Resume,
+           "pomo: paused same id resumes");
+    expect(pomodoroOnChipClick(QStringLiteral("a"), false, QStringLiteral("b"))
+               == PomodoroClickAction::Start,
+           "pomo: running other id replaces");
+    expect(pomodoroOnChipClick(QStringLiteral("a"), true, QStringLiteral("b"))
+               == PomodoroClickAction::Ignore,
+           "pomo: paused other id blocked");
+    expect(pomodoroOnChipClick(QStringLiteral("a"), true, QString()) == PomodoroClickAction::Ignore,
+           "pomo: empty request ignored");
+    expect(pomodoroFrozenSeconds(90) == 90, "pomo: frozen 90");
+    expect(pomodoroFrozenSeconds(0) == 0, "pomo: frozen 0");
+    expect(pomodoroFrozenSeconds(-4) == 0, "pomo: frozen negative");
+    expect(pomodoroResumeDeadline(90, now) == now.addSecs(90), "pomo: resume +90s");
+    expect(!pomodoroResumeDeadline(0, now).isValid(), "pomo: resume 0 invalid");
+    expect(!pomodoroResumeDeadline(-3, now).isValid(), "pomo: resume neg invalid");
+    expect(pomodoroSessionSecondsLeft(now.addSecs(40), false, 99, now) == 40,
+           "pomo: running uses deadline");
+    expect(pomodoroSessionSecondsLeft(now.addSecs(40), true, 12, now) == 12,
+           "pomo: paused uses frozen");
+    expect(pomodoroSessionSecondsLeft(QDateTime(), true, 7, now) == 7,
+           "pomo: paused ignores deadline");
+    expect(pomodoroSessionSecondsLeft(now.addSecs(40), true, -2, now) == 0,
+           "pomo: paused clamps neg");
+    expect(formatPomodoroPauseHint(90) == QStringLiteral("暂停番茄钟  01:30"),
+           "pomo: pause hint");
+    expect(formatPomodoroResumeHint(9) == QStringLiteral("继续番茄钟  00:09"),
+           "pomo: resume hint");
+    {
+        const int left = pomodoroFrozenSeconds(24 * 60);
+        expect(!pomodoroCountsAsComplete(left), "pomo: paused remaining not complete");
+        expect(pomodoroElapsedSeconds(25, left) == 60, "pomo: pause does not add elapsed");
+        const QDateTime later = now.addSecs(600);
+        expect(pomodoroSessionSecondsLeft(QDateTime(), true, left, later) == 24 * 60,
+               "pomo: wall clock during pause ignored");
+        const QDateTime resumed = pomodoroResumeDeadline(left, later);
+        expect(pomodoroRemainingSeconds(resumed, later) == 24 * 60, "pomo: resume keeps remaining");
+        expect(pomodoroRemainingSeconds(resumed, later.addSecs(15)) == 24 * 60 - 15,
+               "pomo: after resume countdown continues");
+    }
+
     expect(pomodoroCountsAsComplete(0), "pomo: remaining 0 is complete");
     expect(pomodoroCountsAsComplete(-3), "pomo: remaining past is complete");
     expect(!pomodoroCountsAsComplete(1), "pomo: remaining 1 is mid-stop");
@@ -775,7 +822,7 @@ void testPomodoroHelpers()
     expect(formatPomodoroFocusedDuration(-4) == QStringLiteral("0h 0m"), "pomo: neg duration");
 
     if (g_failed == before)
-        pass("pomodoro helpers (format / remaining / mutex / stats)");
+        pass("pomodoro helpers (format / remaining / mutex / pause / stats)");
 }
 
 void testPomodoroDoesNotTouchTodos()

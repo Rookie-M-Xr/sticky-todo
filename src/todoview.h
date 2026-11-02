@@ -22,7 +22,7 @@ public:
     QString itemId() const { return m_item.id; }
     const TodoItem &item() const { return m_item; }
     void setItem(const TodoItem &item);
-    void setPomodoro(bool active, int remainingSeconds);
+    void setPomodoro(bool active, int remainingSeconds, bool paused = false);
     void setPomodoroDefaultMinutes(int minutes);
     void startEditing();
     bool isEditing() const { return m_editing; }
@@ -35,6 +35,7 @@ signals:
     void deleteRequested(const QString &id);
     void dateRequested(const QString &id, const QPoint &globalPos);
     void pomodoroToggleRequested(const QString &id);
+    void pomodoroStopRequested(const QString &id);
     void archiveRequested(const QString &id);
     void editingStarted();
 
@@ -69,6 +70,7 @@ private:
     DateChip *m_dateChip = nullptr;
     PomodoroChip *m_pomodoroChip = nullptr;
     bool m_pomodoroActive = false;
+    bool m_pomodoroPaused = false;
     int m_pomodoroRemaining = 0;
     int m_pomodoroDefaultMinutes = kPomodoroDefaultMinutes;
     int m_lineCount = 1;
@@ -117,6 +119,7 @@ signals:
     void deleteRequested(const QString &id);
     void dateRequested(const QString &id, const QPoint &globalPos);
     void pomodoroToggleRequested(const QString &id);
+    void pomodoroStopRequested(const QString &id);
     void archiveRequested(const QString &id);
     void expansionChanged(GroupId id, bool expanded);
 
@@ -140,7 +143,7 @@ public:
     explicit TodoScrollView(DataStore *store, QWidget *parent = nullptr);
 
     void refresh(const QVector<TodoGroup> &groups, const QString &search);
-    void setPomodoro(const QString &id, int remainingSeconds);
+    void setPomodoro(const QString &id, int remainingSeconds, bool paused = false);
     void setPomodoroDefaultMinutes(int minutes);
 
 protected:
@@ -152,6 +155,7 @@ signals:
     void deleteRequested(const QString &id);
     void dateRequested(const QString &id, const QPoint &globalPos);
     void pomodoroToggleRequested(const QString &id);
+    void pomodoroStopRequested(const QString &id);
     void archiveRequested(const QString &id);
     void groupExpansionChanged(GroupId id, bool expanded);
     void clearSearch();

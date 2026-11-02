@@ -348,7 +348,7 @@ MainWindow::MainWindow(QWidget *parent)
             applyTopMost();
         if (s.autoHide && isDocked() && !m_collapsed && !m_pinned)
             startCollapseCountdown(600);
-        // Refresh start-hint labels only. A running clock keeps its captured deadline.
+        // Refresh start-hint labels only. A running/paused clock keeps its remaining.
         applyPomodoroToView();
     });
     connect(m_store, &DataStore::remindersChanged, this, &MainWindow::pruneReminderSnoozes);
@@ -377,6 +377,8 @@ MainWindow::MainWindow(QWidget *parent)
             [this](const QString &id, const QPoint &pos) { openCalendarForTodo(id, pos); });
     connect(m_todosView, &TodoScrollView::pomodoroToggleRequested, this,
             &MainWindow::handlePomodoroToggle);
+    connect(m_todosView, &TodoScrollView::pomodoroStopRequested, this,
+            &MainWindow::handlePomodoroStop);
     connect(m_todosView, &TodoScrollView::groupExpansionChanged, this,
             &MainWindow::handleGroupExpansion);
     connect(m_todosView, &TodoScrollView::clearSearch, this, [this] {
@@ -948,8 +950,9 @@ QString MainWindow::trayTipText() const
             label = elidedOneLine(item->text, 22, Theme::uiFont(11));
         if (label.isEmpty())
             label = QStringLiteral("待办");
-        return QStringLiteral("Sticky Todo · 专注「%1」%2\n单击显示，右键可退出")
-            .arg(label, formatPomodoroClock(pomodoroSecondsLeft()));
+        const QString phase = m_pomodoroPaused ? QStringLiteral("暂停") : QStringLiteral("专注");
+        return QStringLiteral("Sticky Todo · %1「%2」%3\n单击显示，右键可退出")
+            .arg(phase, label, formatPomodoroClock(pomodoroSecondsLeft()));
     }
     return QStringLiteral("Sticky Todo · %1 项待办\n单击显示，右键可退出").arg(pending);
 }
@@ -1487,8 +1490,11 @@ void MainWindow::updateHeader()
         QString subtitle = dateHeadline(m_currentDate);
         if (!m_searchQuery.isEmpty())
             subtitle += QStringLiteral(" · 搜索中");
-        if (!m_pomodoroId.isEmpty())
-            subtitle += QStringLiteral(" · 专注 %1").arg(formatPomodoroClock(pomodoroSecondsLeft()));
+        if (!m_pomodoroId.isEmpty()) {
+            subtitle += m_pomodoroPaused
+                ? QStringLiteral(" · 暂停 %1").arg(formatPomodoroClock(pomodoroSecondsLeft()))
+                : QStringLiteral(" · 专注 %1").arg(formatPomodoroClock(pomodoroSecondsLeft()));
+        }
         subtitle += QStringLiteral(" · %1 项待办").arg(pending);
         m_subtitleLabel->setText(subtitle);
     }
@@ -2615,18 +2621,44 @@ void MainWindow::handleTextEdited(const QString &id, const QString &text)
 
 int MainWindow::pomodoroSecondsLeft() const
 {
-    return pomodoroRemainingSeconds(m_pomodoroDeadline);
+    return pomodoroSessionSecondsLeft(m_pomodoroDeadline, m_pomodoroPaused, m_pomodoroPausedLeft);
 }
 
 void MainWindow::handlePomodoroToggle(const QString &id)
 {
     if (id.isEmpty() || !m_store || !m_store->findTodo(id))
         return;
-    const QString next = pomodoroAfterToggle(m_pomodoroId, id);
-    if (next.isEmpty())
-        stopPomodoro();
-    else
-        startPomodoro(next);
+    switch (pomodoroOnChipClick(m_pomodoroId, m_pomodoroPaused, id)) {
+    case PomodoroClickAction::Start:
+        startPomodoro(id);
+        break;
+    case PomodoroClickAction::Pause:
+        pausePomodoro();
+        break;
+    case PomodoroClickAction::Resume:
+        resumePomodoro();
+        break;
+    case PomodoroClickAction::Ignore:
+        showToast(QStringLiteral("请先结束当前番茄钟"));
+        break;
+    }
+}
+
+void MainWindow::handlePomodoroStop(const QString &id)
+{
+    if (id.isEmpty() || id != m_pomodoroId)
+        return;
+    stopPomodoro();
+}
+
+void MainWindow::ensurePomodoroTick()
+{
+    if (!m_pomodoroTick) {
+        m_pomodoroTick = new QTimer(this);
+        m_pomodoroTick->setInterval(1000);
+        connect(m_pomodoroTick, &QTimer::timeout, this, &MainWindow::onPomodoroTick);
+    }
+    m_pomodoroTick->start();
 }
 
 void MainWindow::startPomodoro(const QString &id)
@@ -2636,15 +2668,54 @@ void MainWindow::startPomodoro(const QString &id)
     if (!m_pomodoroId.isEmpty())
         recordCurrentPomodoro();
     m_pomodoroId = id;
+    m_pomodoroPaused = false;
+    m_pomodoroPausedLeft = 0;
     m_pomodoroSessionMinutes = clampPomodoroMinutes(m_store->settings().pomodoroMinutes);
     m_pomodoroDeadline = QDateTime::currentDateTime().addSecs(
         pomodoroSecondsForMinutes(m_pomodoroSessionMinutes));
-    if (!m_pomodoroTick) {
-        m_pomodoroTick = new QTimer(this);
-        m_pomodoroTick->setInterval(1000);
-        connect(m_pomodoroTick, &QTimer::timeout, this, &MainWindow::onPomodoroTick);
+    ensurePomodoroTick();
+    applyPomodoroToView();
+    updateHeader();
+}
+
+void MainWindow::pausePomodoro()
+{
+    if (m_pomodoroId.isEmpty() || m_pomodoroPaused)
+        return;
+    const int left = pomodoroFrozenSeconds(pomodoroSecondsLeft());
+    if (left <= 0)
+        return;
+    m_pomodoroPausedLeft = left;
+    m_pomodoroPaused = true;
+    m_pomodoroDeadline = QDateTime();
+    if (m_pomodoroTick)
+        m_pomodoroTick->stop();
+    applyPomodoroToView();
+    updateHeader();
+}
+
+void MainWindow::resumePomodoro()
+{
+    if (m_pomodoroId.isEmpty() || !m_pomodoroPaused)
+        return;
+    if (!m_store || !m_store->findTodo(m_pomodoroId)) {
+        stopPomodoro();
+        return;
     }
-    m_pomodoroTick->start();
+    const int left = pomodoroFrozenSeconds(m_pomodoroPausedLeft);
+    QString text;
+    const int minutes = m_pomodoroSessionMinutes;
+    if (const TodoItem *item = m_store->findTodo(m_pomodoroId))
+        text = item->text;
+    m_pomodoroDeadline = pomodoroResumeDeadline(left);
+    m_pomodoroPaused = false;
+    m_pomodoroPausedLeft = 0;
+    if (left <= 0) {
+        stopPomodoro();
+        notifyPomodoroFinished(text, minutes);
+        return;
+    }
+    ensurePomodoroTick();
     applyPomodoroToView();
     updateHeader();
 }
@@ -2668,6 +2739,8 @@ void MainWindow::stopPomodoro()
     m_pomodoroId.clear();
     m_pomodoroDeadline = QDateTime();
     m_pomodoroSessionMinutes = kPomodoroDefaultMinutes;
+    m_pomodoroPaused = false;
+    m_pomodoroPausedLeft = 0;
     if (m_pomodoroTick)
         m_pomodoroTick->stop();
     if (!wasRunning)
@@ -2678,7 +2751,7 @@ void MainWindow::stopPomodoro()
 
 void MainWindow::onPomodoroTick()
 {
-    if (m_pomodoroId.isEmpty())
+    if (m_pomodoroId.isEmpty() || m_pomodoroPaused)
         return;
     if (!m_store || !m_store->findTodo(m_pomodoroId)) {
         stopPomodoro();
@@ -2703,7 +2776,7 @@ void MainWindow::applyPomodoroToView()
         return;
     const int minutes = m_store ? m_store->settings().pomodoroMinutes : kPomodoroDefaultMinutes;
     m_todosView->setPomodoroDefaultMinutes(minutes);
-    m_todosView->setPomodoro(m_pomodoroId, pomodoroSecondsLeft());
+    m_todosView->setPomodoro(m_pomodoroId, pomodoroSecondsLeft(), m_pomodoroPaused);
 }
 
 void MainWindow::notifyPomodoroFinished(const QString &text, int minutes)
