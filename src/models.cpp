@@ -2,6 +2,7 @@
 
 #include <QJsonValue>
 #include <QLocale>
+#include <QTime>
 #include <QUuid>
 #include <algorithm>
 
@@ -315,6 +316,72 @@ QString formatReminderInterval(int minutes)
     return QStringLiteral("每 %1 分钟").arg(n);
 }
 
+QString formatReminderTime(int minutes)
+{
+    if (minutes == kReminderDayMinutes)
+        return QStringLiteral("24:00");
+    const int n = qBound(0, minutes, kReminderDayMinutes - 1);
+    return QStringLiteral("%1:%2")
+        .arg(n / 60, 2, 10, QChar(u'0'))
+        .arg(n % 60, 2, 10, QChar(u'0'));
+}
+
+QString formatReminderWindow(int startMinutes, int endMinutes)
+{
+    return QStringLiteral("%1–%2").arg(formatReminderTime(startMinutes),
+                                       formatReminderTime(endMinutes));
+}
+
+bool parseReminderTime(const QString &text, int *minutes, bool allowEndOfDay)
+{
+    const QString trimmed = text.trimmed();
+    if (trimmed.isEmpty())
+        return false;
+    if (allowEndOfDay
+        && (trimmed == QLatin1String("24:00") || trimmed == QLatin1String("24:00:00"))) {
+        if (minutes)
+            *minutes = kReminderDayMinutes;
+        return true;
+    }
+    QTime time = QTime::fromString(trimmed, QStringLiteral("HH:mm"));
+    if (!time.isValid())
+        time = QTime::fromString(trimmed, QStringLiteral("HH:mm:ss"));
+    if (!time.isValid())
+        time = QTime::fromString(trimmed, QStringLiteral("H:mm"));
+    if (!time.isValid())
+        return false;
+    if (minutes)
+        *minutes = time.hour() * 60 + time.minute();
+    return true;
+}
+
+bool reminderWindowValid(int startMinutes, int endMinutes)
+{
+    return startMinutes >= 0 && startMinutes < kReminderDayMinutes
+        && endMinutes > 0 && endMinutes <= kReminderDayMinutes
+        && startMinutes < endMinutes;
+}
+
+int reminderTimeToMinutes(const QTime &time)
+{
+    if (!time.isValid())
+        return -1;
+    return time.hour() * 60 + time.minute();
+}
+
+bool reminderInActiveWindow(const ReminderItem &item, const QDateTime &now)
+{
+    if (!reminderWindowValid(item.activeStartMinutes, item.activeEndMinutes))
+        return false;
+    const QDateTime origin = now.isValid() ? now : QDateTime::currentDateTime();
+    if (!origin.isValid() || !origin.time().isValid())
+        return false;
+    const int nowMsecs = origin.time().msecsSinceStartOfDay();
+    const int startMsecs = item.activeStartMinutes * 60 * 1000;
+    const int endMsecs = item.activeEndMinutes * 60 * 1000;
+    return nowMsecs >= startMsecs && nowMsecs < endMsecs;
+}
+
 QDateTime reminderAnchor(const ReminderItem &item)
 {
     if (item.lastFiredAt.isValid())
@@ -336,10 +403,12 @@ bool reminderIsDue(const ReminderItem &item, const QDateTime &now)
 {
     if (!item.enabled || item.text.trimmed().isEmpty())
         return false;
+    const QDateTime origin = now.isValid() ? now : QDateTime::currentDateTime();
+    if (!reminderInActiveWindow(item, origin))
+        return false;
     const QDateTime due = reminderNextDue(item);
     if (!due.isValid())
         return false;
-    const QDateTime origin = now.isValid() ? now : QDateTime::currentDateTime();
     return due <= origin;
 }
 
@@ -349,6 +418,8 @@ QJsonObject ReminderItem::toJson() const
     object.insert(QStringLiteral("id"), id);
     object.insert(QStringLiteral("text"), text);
     object.insert(QStringLiteral("intervalMinutes"), intervalMinutes);
+    object.insert(QStringLiteral("activeStart"), formatReminderTime(activeStartMinutes));
+    object.insert(QStringLiteral("activeEnd"), formatReminderTime(activeEndMinutes));
     object.insert(QStringLiteral("enabled"), enabled);
     object.insert(QStringLiteral("lastFiredAt"),
                   lastFiredAt.isValid() ? lastFiredAt.toString(Qt::ISODateWithMs) : QString());
@@ -378,6 +449,25 @@ ReminderItem ReminderItem::fromJson(const QJsonObject &object, bool *ok)
     }
     item.intervalMinutes = clampReminderInterval(rawInterval > 0 ? rawInterval : 60);
     item.enabled = object.value(QStringLiteral("enabled")).toBool(true);
+
+    const QString startText = object.value(QStringLiteral("activeStart")).toString().trimmed();
+    const QString endText = object.value(QStringLiteral("activeEnd")).toString().trimmed();
+    int startMinutes = 0;
+    int endMinutes = kReminderDayMinutes;
+    if (startText.isEmpty() && endText.isEmpty()) {
+        // Pre-#42 rows only had interval+text: keep a same-day all-day window.
+        startMinutes = 0;
+        endMinutes = kReminderDayMinutes;
+    } else {
+        if (!startText.isEmpty() && !parseReminderTime(startText, &startMinutes, false))
+            valid = false;
+        if (!endText.isEmpty() && !parseReminderTime(endText, &endMinutes, true))
+            valid = false;
+        if (!reminderWindowValid(startMinutes, endMinutes))
+            valid = false;
+    }
+    item.activeStartMinutes = startMinutes;
+    item.activeEndMinutes = endMinutes;
 
     item.createdAt = parseDateTime(object.value(QStringLiteral("createdAt")).toString());
     if (!item.createdAt.isValid())

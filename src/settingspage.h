@@ -11,6 +11,7 @@ class QLineEdit;
 class QPushButton;
 class QScrollArea;
 class QSpinBox;
+class QTimeEdit;
 class QVBoxLayout;
 class SwitchButton;
 class TextAction;
@@ -76,6 +77,8 @@ private:
     QLabel *m_pomodoroCompletedLabel = nullptr;
     QLabel *m_pomodoroFocusedLabel = nullptr;
     QSpinBox *m_reminderInterval = nullptr;
+    QTimeEdit *m_reminderStart = nullptr;
+    QTimeEdit *m_reminderEnd = nullptr;
     QLineEdit *m_reminderText = nullptr;
     TextAction *m_reminderAddAction = nullptr;
     QWidget *m_reminderList = nullptr;
