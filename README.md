@@ -139,7 +139,7 @@ $env:STICKY_TODO_DATA_DIR = "$PWD\testdata"
 
 ## 发布
 
-正式发版约定见 [`docs/RELEASE.md`](docs/RELEASE.md)（SemVer、`vX.Y.Z` tag 须推远程、CHANGELOG、GitHub Release、Win zip / Linux tar 文件名带版本）。
+正式发版约定见 [`docs/RELEASE.md`](docs/RELEASE.md)（SemVer、`vX.Y.Z` tag 须推远程、CHANGELOG 偏工程、GitHub Release **正文须中文用户向**、Win zip / Linux tar 文件名带版本）。
 
 - 小皮：定版本与范围并拍板。
 - 劳模：对版本、tag、双端包、Release。
