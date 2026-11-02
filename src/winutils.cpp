@@ -611,6 +611,8 @@ int migrateDataFiles(const QString &srcDir, const QString &dstDir)
         "todos-archive.json",
         "reminders.json",
         "reminders.json.bak",
+        "pomodoro_stats.json",
+        "pomodoro_stats.json.bak",
         "daily-reports.json",
         "weekly-reports.json",
         "monthly-reports.json",

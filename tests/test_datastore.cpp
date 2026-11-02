@@ -678,8 +678,27 @@ void testPomodoroHelpers()
     expect(pomodoroAfterToggle(QStringLiteral("a"), QString()).isEmpty() == false,
            "pomo: empty request keeps current");
 
+    expect(pomodoroCountsAsComplete(0), "pomo: remaining 0 is complete");
+    expect(pomodoroCountsAsComplete(-3), "pomo: remaining past is complete");
+    expect(!pomodoroCountsAsComplete(1), "pomo: remaining 1 is mid-stop");
+    expect(pomodoroElapsedSeconds(25, 25 * 60) == 0, "pomo: elapsed at start");
+    expect(pomodoroElapsedSeconds(25, 24 * 60) == 60, "pomo: elapsed 1 min");
+    expect(pomodoroElapsedSeconds(25, 0) == 25 * 60, "pomo: elapsed full session");
+    expect(pomodoroElapsedSeconds(25, 99999) == 0, "pomo: remaining above total");
+    expect(pomodoroFocusedMinutesFromSeconds(0) == 0, "pomo: 0s -> 0m");
+    expect(pomodoroFocusedMinutesFromSeconds(29) == 0, "pomo: 29s -> 0m");
+    expect(pomodoroFocusedMinutesFromSeconds(30) == 1, "pomo: 30s -> 1m");
+    expect(pomodoroFocusedMinutesFromSeconds(89) == 1, "pomo: 89s -> 1m");
+    expect(pomodoroFocusedMinutesFromSeconds(90) == 2, "pomo: 90s -> 2m");
+    expect(pomodoroFocusedMinutesFromSeconds(-8) == 0, "pomo: negative seconds");
+    expect(formatPomodoroFocusedDuration(0) == QStringLiteral("0h 0m"), "pomo: 0h 0m");
+    expect(formatPomodoroFocusedDuration(25) == QStringLiteral("0h 25m"), "pomo: 0h 25m");
+    expect(formatPomodoroFocusedDuration(60) == QStringLiteral("1h 0m"), "pomo: 1h 0m");
+    expect(formatPomodoroFocusedDuration(75) == QStringLiteral("1h 15m"), "pomo: 1h 15m");
+    expect(formatPomodoroFocusedDuration(-4) == QStringLiteral("0h 0m"), "pomo: neg duration");
+
     if (g_failed == before)
-        pass("pomodoro helpers (format / remaining / mutex)");
+        pass("pomodoro helpers (format / remaining / mutex / stats)");
 }
 
 void testPomodoroDoesNotTouchTodos()
@@ -834,6 +853,184 @@ void testPomodoroMinutesPersist()
 
     if (g_failed == before)
         pass("pomodoro default minutes persist + clamp");
+}
+
+void testPomodoroStatsOptInPersist()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "pomo-stats: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    const QString statsFile = QDir(dataDir).filePath(QStringLiteral("pomodoro_stats.json"));
+    const QString settingsFile = QDir(dataDir).filePath(QStringLiteral("settings.json"));
+    const QString todosFile = QDir(dataDir).filePath(QStringLiteral("todos.json"));
+
+    {
+        DataStore store;
+        expect(store.load(), "pomo-stats: load");
+        expect(!store.settings().pomodoroStatsEnabled, "pomo-stats: default off");
+        expect(store.pomodoroStats().completedCount == 0, "pomo-stats: default count 0");
+        expect(store.pomodoroStats().focusedMinutes == 0, "pomo-stats: default minutes 0");
+        store.recordPomodoroCompleted(25);
+        store.recordPomodoroInterrupted(10 * 60);
+        expect(store.pomodoroStats().completedCount == 0, "pomo-stats: off ignores complete");
+        expect(store.pomodoroStats().focusedMinutes == 0, "pomo-stats: off ignores interrupt");
+        expect(store.flush(), "pomo-stats: flush while off");
+        expect(!QFile::exists(statsFile), "pomo-stats: no file while default off");
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "pomo-stats: reload still off");
+        expect(!store.settings().pomodoroStatsEnabled, "pomo-stats: still off");
+        store.setPomodoroStatsEnabled(true);
+        expect(store.settings().pomodoroStatsEnabled, "pomo-stats: enabled");
+        store.recordPomodoroCompleted(25);
+        expect(store.pomodoroStats().completedCount == 1, "pomo-stats: complete +1");
+        expect(store.pomodoroStats().focusedMinutes == 25, "pomo-stats: complete +25m");
+        store.recordPomodoroInterrupted(29);
+        expect(store.pomodoroStats().focusedMinutes == 25, "pomo-stats: 29s does not add");
+        store.recordPomodoroInterrupted(90);
+        expect(store.pomodoroStats().completedCount == 1, "pomo-stats: interrupt no +count");
+        expect(store.pomodoroStats().focusedMinutes == 27, "pomo-stats: 90s -> +2m");
+        const QString id = store.addTodo(QStringLiteral("focus"), QDate::currentDate());
+        expect(!id.isEmpty(), "pomo-stats: seed todo");
+        expect(store.flush(), "pomo-stats: flush after enable");
+        expect(QFile::exists(statsFile), "pomo-stats: stats file in data dir");
+        expect(statsFile.startsWith(dataDir), "pomo-stats: not install/config path");
+    }
+
+    {
+        QFile file(todosFile);
+        expect(file.open(QIODevice::ReadOnly), "pomo-stats: read todos");
+        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        file.close();
+        const QJsonObject root = doc.object();
+        expect(!root.contains(QStringLiteral("completedCount")),
+               "pomo-stats: todos.json has no completedCount");
+        expect(!root.contains(QStringLiteral("focusedMinutes")),
+               "pomo-stats: todos.json has no focusedMinutes");
+        expect(!root.contains(QStringLiteral("pomodoroStatsEnabled")),
+               "pomo-stats: todos.json has no stats flag");
+        const QJsonArray todos = root.value(QStringLiteral("todos")).toArray();
+        expect(todos.size() == 1, "pomo-stats: todo kept");
+        expect(!todos.at(0).toObject().contains(QStringLiteral("completedCount")),
+               "pomo-stats: todo item has no stats fields");
+    }
+
+    {
+        QFile file(settingsFile);
+        expect(file.open(QIODevice::ReadOnly), "pomo-stats: read settings");
+        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        file.close();
+        const QJsonObject root = doc.object();
+        expect(root.value(QStringLiteral("pomodoroStatsEnabled")).toBool() == true,
+               "pomo-stats: settings flag true");
+        expect(!root.contains(QStringLiteral("completedCount")),
+               "pomo-stats: settings.json has no counts");
+        expect(!root.contains(QStringLiteral("focusedMinutes")),
+               "pomo-stats: settings.json has no minutes");
+    }
+
+    {
+        QFile file(statsFile);
+        expect(file.open(QIODevice::ReadOnly), "pomo-stats: read stats json");
+        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        file.close();
+        const QJsonObject root = doc.object();
+        expect(root.value(QStringLiteral("completedCount")).toInt() == 1,
+               "pomo-stats: json count 1");
+        expect(root.value(QStringLiteral("focusedMinutes")).toInt() == 27,
+               "pomo-stats: json minutes 27");
+        expect(!root.contains(QStringLiteral("todos")), "pomo-stats: stats file not todos");
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "pomo-stats: restart");
+        expect(store.settings().pomodoroStatsEnabled, "pomo-stats: flag kept");
+        expect(store.pomodoroStats().completedCount == 1, "pomo-stats: count kept");
+        expect(store.pomodoroStats().focusedMinutes == 27, "pomo-stats: minutes kept");
+        store.setPomodoroStatsEnabled(false);
+        expect(!store.settings().pomodoroStatsEnabled, "pomo-stats: disabled");
+        store.recordPomodoroCompleted(50);
+        store.recordPomodoroInterrupted(20 * 60);
+        expect(store.pomodoroStats().completedCount == 1, "pomo-stats: off keeps count");
+        expect(store.pomodoroStats().focusedMinutes == 27, "pomo-stats: off keeps minutes");
+        expect(store.flush(), "pomo-stats: flush after disable");
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "pomo-stats: reload after disable");
+        expect(!store.settings().pomodoroStatsEnabled, "pomo-stats: still off");
+        expect(store.pomodoroStats().completedCount == 1, "pomo-stats: numbers survive off");
+        expect(store.pomodoroStats().focusedMinutes == 27, "pomo-stats: duration survives off");
+        expect(QFile::exists(statsFile), "pomo-stats: file kept after disable");
+    }
+
+    {
+        QFile file(statsFile);
+        expect(file.open(QIODevice::ReadOnly), "pomo-stats: read for clamp");
+        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        file.close();
+        QJsonObject root = doc.object();
+        root.insert(QStringLiteral("completedCount"), -3);
+        root.insert(QStringLiteral("focusedMinutes"), -9);
+        expect(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "pomo-stats: write negatives");
+        file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+        file.close();
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "pomo-stats: load negatives");
+        expect(store.pomodoroStats().completedCount == 0, "pomo-stats: negative count -> 0");
+        expect(store.pomodoroStats().focusedMinutes == 0, "pomo-stats: negative minutes -> 0");
+    }
+
+    if (g_failed == before)
+        pass("pomodoro stats opt-in persist + isolate from todos");
+}
+
+void testPomodoroStatsCorruptionRecovery()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "pomo-stats-bak: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    const QString statsFile = QDir(dataDir).filePath(QStringLiteral("pomodoro_stats.json"));
+    const QString bakFile = statsFile + QStringLiteral(".bak");
+
+    {
+        DataStore store;
+        expect(store.load(), "pomo-stats-bak: load");
+        store.setPomodoroStatsEnabled(true);
+        store.recordPomodoroCompleted(25);
+        expect(store.flush(), "pomo-stats-bak: flush");
+        expect(QFile::copy(statsFile, bakFile), "pomo-stats-bak: seed bak");
+    }
+
+    {
+        QFile file(statsFile);
+        expect(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "pomo-stats-bak: corrupt");
+        file.write("not-json{{{");
+        file.close();
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "pomo-stats-bak: load corrupt");
+        expect(store.pomodoroStats().completedCount == 1, "pomo-stats-bak: restored count");
+        expect(store.pomodoroStats().focusedMinutes == 25, "pomo-stats-bak: restored minutes");
+    }
+
+    if (g_failed == before)
+        pass("pomodoro stats recover from .bak");
 }
 
 void testReminderHelpers()
@@ -1155,6 +1352,8 @@ int main(int argc, char *argv[])
     testPomodoroHelpers();
     testPomodoroDoesNotTouchTodos();
     testPomodoroMinutesPersist();
+    testPomodoroStatsOptInPersist();
+    testPomodoroStatsCorruptionRecovery();
     testReminderHelpers();
     testReminderStorePersistAndDisable();
     testReminderDueThenMarkFired();

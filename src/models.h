@@ -110,7 +110,7 @@ QString fullDueLabel(QDate due, QDate today);
 QString relativeDueHint(QDate due, QDate today);
 
 // Session-only focus clock (TR #18). Default minutes live in settings (TR #31).
-// Not a TodoItem field — never written to todos.json.
+// Optional cumulative stats (TR #35) live in pomodoro_stats.json — never todos.json.
 constexpr int kPomodoroMinMinutes = 1;
 constexpr int kPomodoroMaxMinutes = 120;
 constexpr int kPomodoroDefaultMinutes = 25;
@@ -124,3 +124,9 @@ int pomodoroRemainingSeconds(const QDateTime &deadline,
                              const QDateTime &now = QDateTime());
 // Same id toggles off (empty). A different id silently replaces the old one.
 QString pomodoroAfterToggle(const QString &currentId, const QString &requestedId);
+// Complete only when remaining has hit zero. Manual mid-stop (remaining > 0) does not.
+bool pomodoroCountsAsComplete(int remainingSeconds);
+int pomodoroElapsedSeconds(int sessionMinutes, int remainingSeconds);
+// Nearest minute, half-up: 0–29s → 0, 30–89s → 1.
+int pomodoroFocusedMinutesFromSeconds(int focusedSeconds);
+QString formatPomodoroFocusedDuration(int focusedMinutes);
