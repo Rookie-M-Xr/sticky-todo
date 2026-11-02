@@ -4,6 +4,7 @@
 #include <QDateTime>
 #include <QJsonObject>
 #include <QString>
+#include <QTime>
 #include <QVector>
 
 struct TodoItem {
@@ -35,11 +36,22 @@ struct DailySnapshot {
     static DailySnapshot fromJson(const QJsonObject &object, bool *ok = nullptr);
 };
 
-// Interval reminders (TR #19). Own file reminders.json — never a TodoItem field.
+// Interval reminders (TR #19 + #42). Own file reminders.json — never a TodoItem field.
+// Same-day active window [start, end) on the local clock. Cross-midnight is unsupported.
+constexpr int kReminderMinMinutes = 1;
+constexpr int kReminderMaxMinutes = 7 * 24 * 60;
+constexpr int kReminderMaxText = 200;
+constexpr int kReminderMaxCount = 20;
+constexpr int kReminderDayMinutes = 24 * 60;
+constexpr int kReminderDefaultStartMinutes = 9 * 60;
+constexpr int kReminderDefaultEndMinutes = 18 * 60;
+
 struct ReminderItem {
     QString id;
     QString text;
     int intervalMinutes = 60;
+    int activeStartMinutes = 0;
+    int activeEndMinutes = kReminderDayMinutes;
     bool enabled = true;
     QDateTime lastFiredAt;
     QDateTime createdAt;
@@ -49,13 +61,14 @@ struct ReminderItem {
     static ReminderItem fromJson(const QJsonObject &object, bool *ok = nullptr);
 };
 
-constexpr int kReminderMinMinutes = 1;
-constexpr int kReminderMaxMinutes = 7 * 24 * 60;
-constexpr int kReminderMaxText = 200;
-constexpr int kReminderMaxCount = 20;
-
 int clampReminderInterval(int minutes);
 QString formatReminderInterval(int minutes);
+QString formatReminderTime(int minutes);
+QString formatReminderWindow(int startMinutes, int endMinutes);
+bool parseReminderTime(const QString &text, int *minutes, bool allowEndOfDay = false);
+bool reminderWindowValid(int startMinutes, int endMinutes);
+int reminderTimeToMinutes(const QTime &time);
+bool reminderInActiveWindow(const ReminderItem &item, const QDateTime &now = QDateTime());
 QDateTime reminderAnchor(const ReminderItem &item);
 QDateTime reminderNextDue(const ReminderItem &item);
 bool reminderIsDue(const ReminderItem &item, const QDateTime &now = QDateTime());

@@ -102,7 +102,9 @@ public:
 
     const QVector<ReminderItem> &reminders() const { return m_reminders; }
     const ReminderItem *findReminder(const QString &id) const;
-    QString addReminder(const QString &text, int intervalMinutes);
+    QString addReminder(const QString &text, int intervalMinutes,
+                        int activeStartMinutes = 0,
+                        int activeEndMinutes = kReminderDayMinutes);
     bool setReminderEnabled(const QString &id, bool enabled);
     bool removeReminder(const QString &id);
     bool markReminderFired(const QString &id, const QDateTime &when = QDateTime());
