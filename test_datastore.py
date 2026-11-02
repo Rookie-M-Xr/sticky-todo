@@ -80,6 +80,7 @@ def toolchain() -> tuple[list[str], list[str], Path, list[Path]]:
     sources = [
         SRC / "models.cpp",
         SRC / "datastore.cpp",
+        SRC / "theme.cpp",
         moc_cpp,
         TESTS / "test_datastore.cpp",
     ]
