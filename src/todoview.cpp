@@ -247,6 +247,16 @@ void TodoRow::setItem(const TodoItem &item)
     update();
 }
 
+void TodoRow::setPomodoroDefaultMinutes(int minutes)
+{
+    const int next = clampPomodoroMinutes(minutes);
+    if (m_pomodoroDefaultMinutes == next)
+        return;
+    m_pomodoroDefaultMinutes = next;
+    if (m_pomodoroChip)
+        m_pomodoroChip->setDefaultMinutes(m_pomodoroDefaultMinutes);
+}
+
 void TodoRow::setPomodoro(bool active, int remainingSeconds)
 {
     remainingSeconds = active ? qMax(0, remainingSeconds) : 0;
@@ -506,7 +516,7 @@ void TodoRow::openContextMenu(const QPoint &globalPos)
     QAction *pomodoroAction = menu.addAction(
         makeIcon(AppIcon::Timer, 14, Theme::AccentDark),
         m_pomodoroActive ? QStringLiteral("停止番茄钟")
-                         : QStringLiteral("开始番茄钟（25 分钟）"));
+                         : formatPomodoroStartHint(m_pomodoroDefaultMinutes));
     menu.addSeparator();
     QAction *toggleAction = menu.addAction(
         makeIcon(AppIcon::Check, 14, Theme::AccentDark),
@@ -948,9 +958,20 @@ void TodoScrollView::setPomodoro(const QString &id, int remainingSeconds)
         return;
     const auto rows = m_content->findChildren<TodoRow *>();
     for (TodoRow *row : rows) {
+        row->setPomodoroDefaultMinutes(m_pomodoroDefaultMinutes);
         const bool active = !id.isEmpty() && row->itemId() == id;
         row->setPomodoro(active, active ? remainingSeconds : 0);
     }
+}
+
+void TodoScrollView::setPomodoroDefaultMinutes(int minutes)
+{
+    m_pomodoroDefaultMinutes = clampPomodoroMinutes(minutes);
+    if (!m_content)
+        return;
+    const auto rows = m_content->findChildren<TodoRow *>();
+    for (TodoRow *row : rows)
+        row->setPomodoroDefaultMinutes(m_pomodoroDefaultMinutes);
 }
 
 void TodoScrollView::showEmptyState(bool searching)

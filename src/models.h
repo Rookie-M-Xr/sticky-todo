@@ -109,10 +109,16 @@ QString shortDueLabel(QDate due, QDate today);
 QString fullDueLabel(QDate due, QDate today);
 QString relativeDueHint(QDate due, QDate today);
 
-// Session-only 25-minute focus clock (TR #18). Not a TodoItem field — never
-// written to todos.json, so start/stop cannot drop or rewrite persisted items.
-constexpr int kPomodoroDefaultSeconds = 25 * 60;
+// Session-only focus clock (TR #18). Default minutes live in settings (TR #31).
+// Not a TodoItem field — never written to todos.json.
+constexpr int kPomodoroMinMinutes = 1;
+constexpr int kPomodoroMaxMinutes = 120;
+constexpr int kPomodoroDefaultMinutes = 25;
+constexpr int kPomodoroDefaultSeconds = kPomodoroDefaultMinutes * 60;
 
+int clampPomodoroMinutes(int minutes);
+int pomodoroSecondsForMinutes(int minutes);
+QString formatPomodoroStartHint(int minutes);
 QString formatPomodoroClock(int remainingSeconds);
 int pomodoroRemainingSeconds(const QDateTime &deadline,
                              const QDateTime &now = QDateTime());

@@ -447,12 +447,21 @@ void PomodoroChip::setState(bool active, int remainingSeconds)
     update();
 }
 
+void PomodoroChip::setDefaultMinutes(int minutes)
+{
+    const int next = clampPomodoroMinutes(minutes);
+    if (m_defaultMinutes == next)
+        return;
+    m_defaultMinutes = next;
+    refreshTip();
+}
+
 void PomodoroChip::refreshTip()
 {
     if (m_active)
         setToolTip(QStringLiteral("停止番茄钟  %1").arg(formatPomodoroClock(m_remaining)));
     else
-        setToolTip(QStringLiteral("开始番茄钟（25 分钟）"));
+        setToolTip(formatPomodoroStartHint(m_defaultMinutes));
 }
 
 QSize PomodoroChip::sizeHint() const

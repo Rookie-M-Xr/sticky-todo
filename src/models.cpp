@@ -392,6 +392,21 @@ ReminderItem ReminderItem::fromJson(const QJsonObject &object, bool *ok)
     return item;
 }
 
+int clampPomodoroMinutes(int minutes)
+{
+    return qBound(kPomodoroMinMinutes, minutes, kPomodoroMaxMinutes);
+}
+
+int pomodoroSecondsForMinutes(int minutes)
+{
+    return clampPomodoroMinutes(minutes) * 60;
+}
+
+QString formatPomodoroStartHint(int minutes)
+{
+    return QStringLiteral("开始番茄钟（%1 分钟）").arg(clampPomodoroMinutes(minutes));
+}
+
 QString formatPomodoroClock(int remainingSeconds)
 {
     const int clamped = qMax(0, remainingSeconds);

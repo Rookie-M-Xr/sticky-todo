@@ -135,7 +135,7 @@ private:
     void stopPomodoro();
     void onPomodoroTick();
     void applyPomodoroToView();
-    void notifyPomodoroFinished(const QString &text);
+    void notifyPomodoroFinished(const QString &text, int minutes);
     int pomodoroSecondsLeft() const;
     void onReminderTick();
     void notifyReminderDue(const QString &text);
@@ -186,6 +186,7 @@ private:
     QTimer *m_pomodoroTick = nullptr;
     QString m_pomodoroId;
     QDateTime m_pomodoroDeadline;
+    int m_pomodoroSessionMinutes = kPomodoroDefaultMinutes;
     QTimer *m_reminderTick = nullptr;
 
     QDate m_currentDate;
