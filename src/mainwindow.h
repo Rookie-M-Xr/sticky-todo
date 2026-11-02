@@ -128,6 +128,7 @@ private:
     void focusComposer();
     void focusSearch();
     void handleDelete(const QString &id);
+    void handleArchive(const QString &id);
     void handleCompletion(const QString &id, bool completed);
     void handleTextEdited(const QString &id, const QString &text);
     void handlePomodoroToggle(const QString &id);
