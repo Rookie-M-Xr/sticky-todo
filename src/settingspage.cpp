@@ -20,6 +20,8 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSpinBox>
+#include <QTime>
+#include <QTimeEdit>
 #include <QAbstractItemView>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -313,21 +315,57 @@ QWidget *SettingsPage::buildRemindersCard()
     auto *card = new SettingsCard;
     auto *body = card->body();
 
+    const QString spinStyle = QStringLiteral(
+        "QSpinBox, QTimeEdit { border: 1px solid rgba(169,154,120,0.58); border-radius: 8px; "
+        "background: rgba(255,255,255,0.35); color: #4f4a3d; padding: 2px 6px; min-height: 24px; }"
+        "QSpinBox::up-button, QSpinBox::down-button, "
+        "QTimeEdit::up-button, QTimeEdit::down-button { width: 16px; }");
+
     m_reminderInterval = new QSpinBox(card);
     m_reminderInterval->setRange(kReminderMinMinutes, kReminderMaxMinutes);
     m_reminderInterval->setValue(60);
     m_reminderInterval->setSuffix(QStringLiteral(" 分钟"));
     m_reminderInterval->setFixedWidth(96);
     m_reminderInterval->setFocusPolicy(Qt::ClickFocus);
-    m_reminderInterval->setToolTip(QStringLiteral("最短 1 分钟，最长 7 天。进程在才会响。"));
-    m_reminderInterval->setStyleSheet(QStringLiteral(
-        "QSpinBox { border: 1px solid rgba(169,154,120,0.58); border-radius: 8px; "
-        "background: rgba(255,255,255,0.35); color: #4f4a3d; padding: 2px 6px; min-height: 24px; }"
-        "QSpinBox::up-button, QSpinBox::down-button { width: 16px; }"));
+    m_reminderInterval->setToolTip(QStringLiteral("最短 1 分钟，最长 7 天。仅生效时段内、且进程在才会响。"));
+    m_reminderInterval->setStyleSheet(spinStyle);
     auto *intervalRow = new SettingRow(QStringLiteral("间隔"),
-                                       QStringLiteral("到点 toast / 托盘提示"),
+                                       QStringLiteral("窗内按间隔 toast / 托盘"),
                                        m_reminderInterval, card);
     body->addWidget(intervalRow);
+
+    body->addWidget(new Separator(card));
+
+    auto *windowBox = new QWidget(card);
+    auto *windowLayout = new QHBoxLayout(windowBox);
+    windowLayout->setContentsMargins(0, 0, 0, 0);
+    windowLayout->setSpacing(4);
+
+    auto makeTimeEdit = [&](const QTime &time) {
+        auto *edit = new QTimeEdit(time, windowBox);
+        edit->setDisplayFormat(QStringLiteral("HH:mm"));
+        edit->setWrapping(false);
+        edit->setFixedWidth(78);
+        edit->setFocusPolicy(Qt::ClickFocus);
+        edit->setToolTip(QStringLiteral("仅当日时段；结束时刻不含。不支持 22:00–06:00 跨午夜。"));
+        edit->setStyleSheet(spinStyle);
+        return edit;
+    };
+    m_reminderStart = makeTimeEdit(QTime(kReminderDefaultStartMinutes / 60,
+                                         kReminderDefaultStartMinutes % 60));
+    m_reminderEnd = makeTimeEdit(QTime(kReminderDefaultEndMinutes / 60,
+                                       kReminderDefaultEndMinutes % 60));
+    windowLayout->addWidget(m_reminderStart);
+    auto *dash = new QLabel(QStringLiteral("–"), windowBox);
+    dash->setFont(Theme::uiFont(11));
+    dash->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(Theme::Muted.name()));
+    windowLayout->addWidget(dash, 0, Qt::AlignVCenter);
+    windowLayout->addWidget(m_reminderEnd);
+
+    auto *windowRow = new SettingRow(QStringLiteral("生效时段"),
+                                     QStringLiteral("仅当日 [开始, 结束)，不支持跨午夜"),
+                                     windowBox, card);
+    body->addWidget(windowRow);
 
     body->addWidget(new Separator(card));
 
@@ -369,7 +407,7 @@ QWidget *SettingsPage::buildRemindersCard()
     m_reminderListLayout->setSpacing(0);
     body->addWidget(m_reminderList);
 
-    m_reminderEmpty = new QLabel(QStringLiteral("还没有提醒。填间隔和文案后点添加。"), card);
+    m_reminderEmpty = new QLabel(QStringLiteral("还没有提醒。填当日时段、间隔和文案后点添加。"), card);
     m_reminderEmpty->setFont(Theme::uiFont(10));
     m_reminderEmpty->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(Theme::Muted.name()));
     m_reminderEmpty->setWordWrap(true);
@@ -444,7 +482,7 @@ QWidget *SettingsPage::buildPomodoroCard()
 
 void SettingsPage::submitNewReminder()
 {
-    if (!m_store || !m_reminderText || !m_reminderInterval)
+    if (!m_store || !m_reminderText || !m_reminderInterval || !m_reminderStart || !m_reminderEnd)
         return;
     const QString text = m_reminderText->text().trimmed();
     if (text.isEmpty()) {
@@ -455,7 +493,14 @@ void SettingsPage::submitNewReminder()
         emit messageRequested(QStringLiteral("最多 %1 条提醒").arg(kReminderMaxCount));
         return;
     }
-    const QString id = m_store->addReminder(text, m_reminderInterval->value());
+    const int startMinutes = reminderTimeToMinutes(m_reminderStart->time());
+    const int endMinutes = reminderTimeToMinutes(m_reminderEnd->time());
+    if (!reminderWindowValid(startMinutes, endMinutes)) {
+        emit messageRequested(QStringLiteral("仅支持当日时段，结束须晚于开始"));
+        return;
+    }
+    const QString id = m_store->addReminder(text, m_reminderInterval->value(),
+                                           startMinutes, endMinutes);
     if (id.isEmpty()) {
         emit messageRequested(QStringLiteral("未能添加提醒"));
         return;
@@ -515,8 +560,11 @@ void SettingsPage::rebuildReminderRows()
         });
         controlLayout->addWidget(remove);
 
-        auto *row = new SettingRow(item.text, formatReminderInterval(item.intervalMinutes),
-                                   controls, m_reminderList);
+        const QString subtitle = QStringLiteral("%1 · %2")
+                                     .arg(formatReminderWindow(item.activeStartMinutes,
+                                                               item.activeEndMinutes),
+                                          formatReminderInterval(item.intervalMinutes));
+        auto *row = new SettingRow(item.text, subtitle, controls, m_reminderList);
         m_reminderListLayout->addWidget(row);
     }
 }

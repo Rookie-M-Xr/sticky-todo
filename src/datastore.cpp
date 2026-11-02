@@ -243,7 +243,8 @@ const ReminderItem *DataStore::findReminder(const QString &id) const
     return nullptr;
 }
 
-QString DataStore::addReminder(const QString &text, int intervalMinutes)
+QString DataStore::addReminder(const QString &text, int intervalMinutes,
+                               int activeStartMinutes, int activeEndMinutes)
 {
     const QString trimmed = text.trimmed().left(kReminderMaxText);
     if (trimmed.isEmpty())
@@ -253,12 +254,16 @@ QString DataStore::addReminder(const QString &text, int intervalMinutes)
     const int interval = clampReminderInterval(intervalMinutes);
     if (intervalMinutes < kReminderMinMinutes || intervalMinutes > kReminderMaxMinutes)
         return {};
+    if (!reminderWindowValid(activeStartMinutes, activeEndMinutes))
+        return {};
 
     const QDateTime now = QDateTime::currentDateTime();
     ReminderItem item;
     item.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     item.text = trimmed;
     item.intervalMinutes = interval;
+    item.activeStartMinutes = activeStartMinutes;
+    item.activeEndMinutes = activeEndMinutes;
     item.enabled = true;
     item.lastFiredAt = now;
     item.createdAt = now;
