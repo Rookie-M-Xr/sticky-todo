@@ -1,9 +1,29 @@
 # Changelog
 
+## v0.1.5
+
+- **日期**：2026-11-02（Asia/Shanghai）
+- **Tip**：见 Git tag `v0.1.5`（annotated）指向的 commit
+- **范围**：已关 TR #63（PATCH）；Refs #66
+- **相对 v0.1.4**：仅增量 #63；v0.1.4 不完整/错误包（仅 Linux、未含 #63）已下架，由本版双端 Release 取代
+
+### 本版纳入
+
+- #63 tooltip 在番茄钟悬停后不再黑底灰字、方角：纸色可读、圆角贴合
+- 双端资产一次挂齐：Linux tar 随本 Release 上传；Windows zip 槽位 `StickyTodo-Windows-x86_64-v0.1.5.zip` 由 MxrPc 随后补传（本环境无法出 Win 包，不伪造）
+
+### 已知限制
+
+- 不做 Inno 安装包（#28）、不签名。
+- Linux Wayland：系统级全局热键受限，注册会失败并提示；不额外申请门户权限。
+- Linux 包需宿主提供 xcb（Wayland-only 会话可能需兼容层）；详见 Linux 包内 README。
+- 低完整性进程必须使用 `Start StickyTodo.cmd` 启动（不会静默抬到 Medium）。
+- 番茄钟为会话内计时（重启不恢复进行中/暂停中的钟）；提醒仅在进程运行时到点（不做开机任务计划）；延后不落盘。
+
 ## v0.1.4
 
 - **日期**：2026-11-02（Asia/Shanghai）
-- **Tip**：见 Git tag `v0.1.4`（annotated）指向的 commit
+- **Tip**：原 Git tag `v0.1.4` 曾指向 `e52e9b9`；**该 Release 与 tag 已下架**，由 v0.1.5 双端包取代（当时仅 Linux、且未含 #63）
 - **范围**：已关 TR #40 #41 #50 #51 #52（MINOR）
 
 ### 本版纳入
@@ -13,7 +33,7 @@
 - #50 定时提醒生效窗支持跨午夜：结束≤开始视为当日 start→24:00 ∪ 次日 00:00→end；窗外不弹
 - #51 提醒到点可延后几分钟：toast 上 5 / 10 / 15 档；只改进程内下次触发，不改间隔与生效窗
 - #52 番茄进行中可暂停/继续：剩余冻结，继续后接着走；暂停占互斥槽；暂停墙钟不计入专注
-- Linux tar 随本 Release 上传；Win zip 由 MxrPc 后续补传（本环境无法出 Win 包）
+- Linux tar 曾随本 Release 上传；Win zip 未补传。资产与 tag 已随下架删除，改由 v0.1.5 承接双端
 
 ### 已知限制
 
