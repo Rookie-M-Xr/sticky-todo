@@ -1033,6 +1033,91 @@ void testPomodoroStatsCorruptionRecovery()
         pass("pomodoro stats recover from .bak");
 }
 
+void testPomodoroStatsClear()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "pomo-clear: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    const QString statsFile = QDir(dataDir).filePath(QStringLiteral("pomodoro_stats.json"));
+    const QString settingsFile = QDir(dataDir).filePath(QStringLiteral("settings.json"));
+
+    {
+        DataStore store;
+        expect(store.load(), "pomo-clear: load");
+        store.setPomodoroStatsEnabled(true);
+        store.recordPomodoroCompleted(25);
+        store.recordPomodoroInterrupted(90);
+        expect(store.pomodoroStats().completedCount == 1, "pomo-clear: seeded count");
+        expect(store.pomodoroStats().focusedMinutes == 27, "pomo-clear: seeded minutes");
+        expect(store.flush(), "pomo-clear: flush seed");
+        store.clearPomodoroStats();
+        expect(store.pomodoroStats().completedCount == 0, "pomo-clear: count 0");
+        expect(store.pomodoroStats().focusedMinutes == 0, "pomo-clear: minutes 0");
+        expect(store.settings().pomodoroStatsEnabled, "pomo-clear: switch stays on");
+        expect(store.flush(), "pomo-clear: flush after clear");
+    }
+
+    {
+        QFile file(statsFile);
+        expect(file.open(QIODevice::ReadOnly), "pomo-clear: read stats");
+        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        file.close();
+        const QJsonObject root = doc.object();
+        expect(root.value(QStringLiteral("completedCount")).toInt() == 0,
+               "pomo-clear: json count 0");
+        expect(root.value(QStringLiteral("focusedMinutes")).toInt() == 0,
+               "pomo-clear: json minutes 0");
+    }
+
+    {
+        QFile file(settingsFile);
+        expect(file.open(QIODevice::ReadOnly), "pomo-clear: read settings");
+        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        file.close();
+        expect(doc.object().value(QStringLiteral("pomodoroStatsEnabled")).toBool() == true,
+               "pomo-clear: settings flag still true");
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "pomo-clear: restart");
+        expect(store.settings().pomodoroStatsEnabled, "pomo-clear: restart switch on");
+        expect(store.pomodoroStats().completedCount == 0, "pomo-clear: restart count 0");
+        expect(store.pomodoroStats().focusedMinutes == 0, "pomo-clear: restart minutes 0");
+        store.setPomodoroStatsEnabled(false);
+        store.recordPomodoroCompleted(50);
+        expect(store.pomodoroStats().completedCount == 0, "pomo-clear: off no increment");
+        store.setPomodoroStatsEnabled(true);
+        store.recordPomodoroCompleted(25);
+        expect(store.pomodoroStats().completedCount == 1, "pomo-clear: re-enable records");
+        expect(store.pomodoroStats().focusedMinutes == 25, "pomo-clear: re-enable minutes");
+        store.setPomodoroStatsEnabled(false);
+        store.clearPomodoroStats();
+        expect(store.pomodoroStats().completedCount == 0, "pomo-clear: clear while off");
+        expect(store.pomodoroStats().focusedMinutes == 0, "pomo-clear: minutes while off");
+        expect(!store.settings().pomodoroStatsEnabled, "pomo-clear: switch stays off");
+        expect(store.flush(), "pomo-clear: flush after off clear");
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "pomo-clear: reload after off clear");
+        expect(!store.settings().pomodoroStatsEnabled, "pomo-clear: still off");
+        expect(store.pomodoroStats().completedCount == 0, "pomo-clear: still 0");
+        expect(store.pomodoroStats().focusedMinutes == 0, "pomo-clear: duration still 0");
+        store.clearPomodoroStats();
+        expect(store.pomodoroStats().completedCount == 0, "pomo-clear: idempotent count");
+        expect(store.pomodoroStats().focusedMinutes == 0, "pomo-clear: idempotent minutes");
+        expect(!store.settings().pomodoroStatsEnabled, "pomo-clear: idempotent switch");
+    }
+
+    if (g_failed == before)
+        pass("pomodoro stats clear persist + keep switch");
+}
+
 void testReminderHelpers()
 {
     const int before = g_failed;
@@ -1536,6 +1621,7 @@ int main(int argc, char *argv[])
     testPomodoroMinutesPersist();
     testPomodoroStatsOptInPersist();
     testPomodoroStatsCorruptionRecovery();
+    testPomodoroStatsClear();
     testReminderHelpers();
     testReminderStorePersistAndDisable();
     testReminderDueThenMarkFired();

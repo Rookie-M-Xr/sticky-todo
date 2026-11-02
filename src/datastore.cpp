@@ -489,6 +489,16 @@ void DataStore::recordPomodoroInterrupted(int focusedSeconds)
     emit pomodoroStatsChanged();
 }
 
+void DataStore::clearPomodoroStats()
+{
+    if (m_pomodoroStats.completedCount == 0 && m_pomodoroStats.focusedMinutes == 0)
+        return;
+    m_pomodoroStats.completedCount = 0;
+    m_pomodoroStats.focusedMinutes = 0;
+    schedulePomodoroStatsSave(0);
+    emit pomodoroStatsChanged();
+}
+
 void DataStore::setShowDailyReport(bool on)
 {
     if (m_settings.showDailyReport == on)
