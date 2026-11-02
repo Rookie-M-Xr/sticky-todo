@@ -25,7 +25,8 @@ enum class AppIcon {
     ArrowRight,
     External,
     More,
-    Dot
+    Dot,
+    Timer
 };
 
 QPixmap iconPixmap(AppIcon icon, int size, const QColor &color, qreal dpr = 1.0);

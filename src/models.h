@@ -83,3 +83,13 @@ QString dateHeadline(QDate date);
 QString shortDueLabel(QDate due, QDate today);
 QString fullDueLabel(QDate due, QDate today);
 QString relativeDueHint(QDate due, QDate today);
+
+// Session-only 25-minute focus clock (TR #18). Not a TodoItem field — never
+// written to todos.json, so start/stop cannot drop or rewrite persisted items.
+constexpr int kPomodoroDefaultSeconds = 25 * 60;
+
+QString formatPomodoroClock(int remainingSeconds);
+int pomodoroRemainingSeconds(const QDateTime &deadline,
+                             const QDateTime &now = QDateTime());
+// Same id toggles off (empty). A different id silently replaces the old one.
+QString pomodoroAfterToggle(const QString &currentId, const QString &requestedId);

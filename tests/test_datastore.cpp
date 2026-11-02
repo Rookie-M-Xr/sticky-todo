@@ -643,6 +643,108 @@ void testTrayHideHintPersist()
         pass("tray hide hint persisted");
 }
 
+void testPomodoroHelpers()
+{
+    const int before = g_failed;
+    expect(kPomodoroDefaultSeconds == 25 * 60, "pomo: default 25 minutes");
+    expect(formatPomodoroClock(25 * 60) == QStringLiteral("25:00"), "pomo: format 25:00");
+    expect(formatPomodoroClock(61) == QStringLiteral("01:01"), "pomo: format 01:01");
+    expect(formatPomodoroClock(9) == QStringLiteral("00:09"), "pomo: format 00:09");
+    expect(formatPomodoroClock(0) == QStringLiteral("00:00"), "pomo: format zero");
+    expect(formatPomodoroClock(-12) == QStringLiteral("00:00"), "pomo: format negative");
+
+    const QDateTime now(QDate(2026, 11, 2), QTime(12, 0, 0));
+    expect(pomodoroRemainingSeconds(now.addSecs(90), now) == 90, "pomo: remaining 90");
+    expect(pomodoroRemainingSeconds(now.addSecs(-1), now) == 0, "pomo: remaining past is 0");
+    expect(pomodoroRemainingSeconds(QDateTime(), now) == 0, "pomo: invalid deadline");
+
+    expect(pomodoroAfterToggle(QString(), QStringLiteral("a")) == QStringLiteral("a"),
+           "pomo: start first");
+    expect(pomodoroAfterToggle(QStringLiteral("a"), QStringLiteral("a")).isEmpty(),
+           "pomo: same id stops");
+    expect(pomodoroAfterToggle(QStringLiteral("a"), QStringLiteral("b")) == QStringLiteral("b"),
+           "pomo: other id replaces");
+    expect(pomodoroAfterToggle(QStringLiteral("a"), QString()).isEmpty() == false,
+           "pomo: empty request keeps current");
+
+    if (g_failed == before)
+        pass("pomodoro helpers (format / remaining / mutex)");
+}
+
+void testPomodoroDoesNotTouchTodos()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "pomo-json: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    const QString todosPath = QDir(dataDir).filePath(QStringLiteral("todos.json"));
+    QString keepId;
+    QString otherId;
+    {
+        DataStore store;
+        expect(store.load(), "pomo-json: load");
+        keepId = store.addTodo(QStringLiteral("focus-me"), QDate::currentDate());
+        otherId = store.addTodo(QStringLiteral("later"), QDate());
+        expect(!keepId.isEmpty() && !otherId.isEmpty(), "pomo-json: seed");
+        expect(store.flush(), "pomo-json: flush seed");
+    }
+
+    {
+        QFile file(todosPath);
+        expect(file.open(QIODevice::ReadOnly), "pomo-json: read seed");
+        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        file.close();
+        QJsonObject root = doc.object();
+        QJsonArray todos = root.value(QStringLiteral("todos")).toArray();
+        expect(todos.size() == 2, "pomo-json: two items");
+        QJsonObject first = todos.at(0).toObject();
+        first.insert(QStringLiteral("pomodoroEndsAt"), QStringLiteral("2099-01-01T00:00:00"));
+        first.insert(QStringLiteral("pomodoroActive"), true);
+        todos.replace(0, first);
+        root.insert(QStringLiteral("todos"), todos);
+        expect(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "pomo-json: rewrite extras");
+        file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+        file.close();
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "pomo-json: load extras");
+        expect(store.todos().size() == 2, "pomo-json: both survived unknown fields");
+        expect(store.updateText(keepId, QStringLiteral("focus-me-v2")), "pomo-json: edit while clock session");
+        expect(store.setCompleted(otherId, true), "pomo-json: complete other");
+        expect(store.flush(), "pomo-json: flush after edits");
+        expect(store.findTodo(keepId) != nullptr, "pomo-json: focus item still there");
+        expect(store.findTodo(keepId)->text == QStringLiteral("focus-me-v2"),
+               "pomo-json: text kept");
+        expect(store.findTodo(otherId) != nullptr && store.findTodo(otherId)->completed,
+               "pomo-json: other kept");
+    }
+
+    {
+        QFile file(todosPath);
+        expect(file.open(QIODevice::ReadOnly), "pomo-json: read rewritten");
+        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        file.close();
+        const QJsonArray todos = doc.object().value(QStringLiteral("todos")).toArray();
+        expect(todos.size() == 2, "pomo-json: still two after save");
+        for (const QJsonValue &value : todos) {
+            const QJsonObject object = value.toObject();
+            expect(!object.contains(QStringLiteral("pomodoroEndsAt")),
+                   "pomo-json: session field not persisted");
+            expect(!object.contains(QStringLiteral("pomodoroActive")),
+                   "pomo-json: active flag not persisted");
+            expect(object.contains(QStringLiteral("id")), "pomo-json: id kept");
+            expect(object.contains(QStringLiteral("text")), "pomo-json: text kept");
+        }
+    }
+
+    if (g_failed == before)
+        pass("pomodoro session fields ignored; todos survive edits");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -659,6 +761,8 @@ int main(int argc, char *argv[])
     testArchiveExpired();
     testArchiveReimport();
     testTrayHideHintPersist();
+    testPomodoroHelpers();
+    testPomodoroDoesNotTouchTodos();
 
     if (g_failed != 0) {
         std::fprintf(stderr, "%d assertion(s) failed\n", g_failed);

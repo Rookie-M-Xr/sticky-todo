@@ -370,6 +370,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_todosView, &TodoScrollView::deleteRequested, this, &MainWindow::handleDelete);
     connect(m_todosView, &TodoScrollView::dateRequested, this,
             [this](const QString &id, const QPoint &pos) { openCalendarForTodo(id, pos); });
+    connect(m_todosView, &TodoScrollView::pomodoroToggleRequested, this,
+            &MainWindow::handlePomodoroToggle);
     connect(m_todosView, &TodoScrollView::groupExpansionChanged, this,
             &MainWindow::handleGroupExpansion);
     connect(m_todosView, &TodoScrollView::clearSearch, this, [this] {
@@ -929,6 +931,15 @@ QString MainWindow::trayTipText() const
                 ++pending;
         }
     }
+    if (!m_pomodoroId.isEmpty() && m_store) {
+        QString label;
+        if (const TodoItem *item = m_store->findTodo(m_pomodoroId))
+            label = elidedOneLine(item->text, 22, Theme::uiFont(11));
+        if (label.isEmpty())
+            label = QStringLiteral("待办");
+        return QStringLiteral("Sticky Todo · 专注「%1」%2\n单击显示，右键可退出")
+            .arg(label, formatPomodoroClock(pomodoroSecondsLeft()));
+    }
     return QStringLiteral("Sticky Todo · %1 项待办\n单击显示，右键可退出").arg(pending);
 }
 
@@ -1465,6 +1476,8 @@ void MainWindow::updateHeader()
         QString subtitle = dateHeadline(m_currentDate);
         if (!m_searchQuery.isEmpty())
             subtitle += QStringLiteral(" · 搜索中");
+        if (!m_pomodoroId.isEmpty())
+            subtitle += QStringLiteral(" · 专注 %1").arg(formatPomodoroClock(pomodoroSecondsLeft()));
         subtitle += QStringLiteral(" · %1 项待办").arg(pending);
         m_subtitleLabel->setText(subtitle);
     }
@@ -1617,11 +1630,14 @@ void MainWindow::refreshTodos()
 {
     if (!m_todosView || !m_store)
         return;
+    if (!m_pomodoroId.isEmpty() && !m_store->findTodo(m_pomodoroId))
+        stopPomodoro();
     m_currentDate = QDate::currentDate();
     const QVector<TodoGroup> groups =
         buildGroups(m_store->todos(), m_currentDate, m_searchQuery);
     m_searchBox->setEnabled(true);
     m_todosView->refresh(groups, m_searchQuery);
+    applyPomodoroToView();
     updateHeader();
     updateTrayState();
     reapplyDockGeometry();
@@ -2539,6 +2555,8 @@ void MainWindow::focusSearch()
 
 void MainWindow::handleDelete(const QString &id)
 {
+    if (id == m_pomodoroId)
+        stopPomodoro();
     TodoItem removed;
     int index = -1;
     if (!m_store->removeTodo(id, &removed, &index))
@@ -2569,6 +2587,93 @@ void MainWindow::handleTextEdited(const QString &id, const QString &text)
 {
     if (!text.trimmed().isEmpty())
         m_store->updateText(id, text);
+}
+
+int MainWindow::pomodoroSecondsLeft() const
+{
+    return pomodoroRemainingSeconds(m_pomodoroDeadline);
+}
+
+void MainWindow::handlePomodoroToggle(const QString &id)
+{
+    if (id.isEmpty() || !m_store || !m_store->findTodo(id))
+        return;
+    const QString next = pomodoroAfterToggle(m_pomodoroId, id);
+    if (next.isEmpty())
+        stopPomodoro();
+    else
+        startPomodoro(next);
+}
+
+void MainWindow::startPomodoro(const QString &id)
+{
+    if (id.isEmpty() || !m_store || !m_store->findTodo(id))
+        return;
+    m_pomodoroId = id;
+    m_pomodoroDeadline = QDateTime::currentDateTime().addSecs(kPomodoroDefaultSeconds);
+    if (!m_pomodoroTick) {
+        m_pomodoroTick = new QTimer(this);
+        m_pomodoroTick->setInterval(1000);
+        connect(m_pomodoroTick, &QTimer::timeout, this, &MainWindow::onPomodoroTick);
+    }
+    m_pomodoroTick->start();
+    applyPomodoroToView();
+    updateHeader();
+}
+
+void MainWindow::stopPomodoro()
+{
+    const bool wasRunning = !m_pomodoroId.isEmpty();
+    m_pomodoroId.clear();
+    m_pomodoroDeadline = QDateTime();
+    if (m_pomodoroTick)
+        m_pomodoroTick->stop();
+    if (!wasRunning)
+        return;
+    applyPomodoroToView();
+    updateHeader();
+}
+
+void MainWindow::onPomodoroTick()
+{
+    if (m_pomodoroId.isEmpty())
+        return;
+    if (!m_store || !m_store->findTodo(m_pomodoroId)) {
+        stopPomodoro();
+        return;
+    }
+    if (pomodoroSecondsLeft() <= 0) {
+        QString text;
+        if (const TodoItem *item = m_store->findTodo(m_pomodoroId))
+            text = item->text;
+        stopPomodoro();
+        notifyPomodoroFinished(text);
+        return;
+    }
+    applyPomodoroToView();
+    updateHeader();
+}
+
+void MainWindow::applyPomodoroToView()
+{
+    if (!m_todosView)
+        return;
+    m_todosView->setPomodoro(m_pomodoroId, pomodoroSecondsLeft());
+}
+
+void MainWindow::notifyPomodoroFinished(const QString &text)
+{
+    const QString label = text.trimmed().isEmpty()
+        ? QStringLiteral("这条待办")
+        : elidedOneLine(text, 28, Theme::uiFont(12));
+    const QString message = QStringLiteral("「%1」的 25 分钟到了").arg(label);
+    if (m_collapsed)
+        expandFromTab(false);
+    if (!isVisible() || isMinimized())
+        showAndActivate();
+    showToast(message, QString(), {}, 7000);
+    if (m_trayInstalled)
+        WinUtils::showTrayBalloon(this, QStringLiteral("Sticky Todo"), message);
 }
 
 void MainWindow::handleGroupExpansion(GroupId id, bool expanded)

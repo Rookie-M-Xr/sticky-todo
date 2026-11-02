@@ -126,6 +126,29 @@ private:
     bool m_hover = false;
 };
 
+class PomodoroChip : public QAbstractButton
+{
+    Q_OBJECT
+public:
+    explicit PomodoroChip(QWidget *parent = nullptr);
+
+    void setState(bool active, int remainingSeconds);
+    bool isActive() const { return m_active; }
+    QSize sizeHint() const override;
+
+protected:
+    void paintEvent(QPaintEvent *event) override;
+    void enterEvent(QEnterEvent *event) override;
+    void leaveEvent(QEvent *event) override;
+
+private:
+    void refreshTip();
+
+    bool m_active = false;
+    int m_remaining = 0;
+    bool m_hover = false;
+};
+
 class CircleAddButton : public QAbstractButton
 {
     Q_OBJECT

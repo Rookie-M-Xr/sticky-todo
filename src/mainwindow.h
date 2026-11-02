@@ -5,6 +5,7 @@
 #include <QAbstractNativeEventFilter>
 #include <QByteArray>
 #include <QDate>
+#include <QDateTime>
 #include <QImage>
 #include <QPoint>
 #include <QRect>
@@ -129,6 +130,13 @@ private:
     void handleDelete(const QString &id);
     void handleCompletion(const QString &id, bool completed);
     void handleTextEdited(const QString &id, const QString &text);
+    void handlePomodoroToggle(const QString &id);
+    void startPomodoro(const QString &id);
+    void stopPomodoro();
+    void onPomodoroTick();
+    void applyPomodoroToView();
+    void notifyPomodoroFinished(const QString &text);
+    int pomodoroSecondsLeft() const;
     void handleGroupExpansion(GroupId id, bool expanded);
     void handleSearchChanged(const QString &text);
     void runSearch();
@@ -172,6 +180,10 @@ private:
     QTimer *m_collapseTimer = nullptr;
     QTimer *m_hoverTimer = nullptr;
     QTimer *m_dateTimer = nullptr;
+
+    QTimer *m_pomodoroTick = nullptr;
+    QString m_pomodoroId;
+    QDateTime m_pomodoroDeadline;
 
     QDate m_currentDate;
     QString m_searchQuery;

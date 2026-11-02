@@ -424,6 +424,93 @@ void DateChip::leaveEvent(QEvent *event)
     update();
 }
 
+PomodoroChip::PomodoroChip(QWidget *parent)
+    : QAbstractButton(parent)
+{
+    setCursor(Qt::PointingHandCursor);
+    setFocusPolicy(Qt::NoFocus);
+    setFont(Theme::uiFont(11, QFont::DemiBold));
+    setFixedHeight(24);
+    setAttribute(Qt::WA_Hover, true);
+    refreshTip();
+}
+
+void PomodoroChip::setState(bool active, int remainingSeconds)
+{
+    const int remaining = qMax(0, remainingSeconds);
+    if (m_active == active && m_remaining == remaining)
+        return;
+    m_active = active;
+    m_remaining = remaining;
+    refreshTip();
+    updateGeometry();
+    update();
+}
+
+void PomodoroChip::refreshTip()
+{
+    if (m_active)
+        setToolTip(QStringLiteral("停止番茄钟  %1").arg(formatPomodoroClock(m_remaining)));
+    else
+        setToolTip(QStringLiteral("开始番茄钟（25 分钟）"));
+}
+
+QSize PomodoroChip::sizeHint() const
+{
+    if (!m_active)
+        return QSize(24, 24);
+    const QFontMetrics metrics(font());
+    const int clockWidth = metrics.horizontalAdvance(QStringLiteral("00:00"));
+    return QSize(10 + 13 + 4 + clockWidth + 8, 24);
+}
+
+void PomodoroChip::paintEvent(QPaintEvent *event)
+{
+    Q_UNUSED(event);
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    const QRectF box = QRectF(rect()).adjusted(0.6, 0.6, -0.6, -0.6);
+
+    if (m_active) {
+        QColor background = QColor(220, 226, 194, m_hover || isDown() ? 210 : 165);
+        QColor border(141, 155, 108, 140);
+        QColor foreground = Theme::AccentDark;
+        painter.setPen(QPen(border, 1.0));
+        painter.setBrush(background);
+        painter.drawRoundedRect(box, 7, 7);
+        drawAppIcon(painter, QRectF(7, (height() - 13) / 2.0, 13, 13), AppIcon::Timer,
+                    foreground, 1.4);
+        painter.setFont(font());
+        painter.setPen(foreground);
+        painter.drawText(QRect(22, 0, width() - 26, height()),
+                         Qt::AlignLeft | Qt::AlignVCenter, formatPomodoroClock(m_remaining));
+        return;
+    }
+
+    if (m_hover || isDown()) {
+        QColor background = QColor(99, 88, 55, isDown() ? 46 : 24);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(background);
+        painter.drawRoundedRect(QRectF(rect()).adjusted(1.5, 1.5, -1.5, -1.5), 7, 7);
+    }
+    drawAppIcon(painter, QRectF((width() - 15) / 2.0, (height() - 15) / 2.0, 15, 15),
+                AppIcon::Timer, m_hover ? Theme::AccentDark : QColor(151, 132, 108), 1.55);
+}
+
+void PomodoroChip::enterEvent(QEnterEvent *event)
+{
+    QAbstractButton::enterEvent(event);
+    m_hover = true;
+    update();
+}
+
+void PomodoroChip::leaveEvent(QEvent *event)
+{
+    QAbstractButton::leaveEvent(event);
+    m_hover = false;
+    update();
+}
+
 CircleAddButton::CircleAddButton(QWidget *parent)
     : QAbstractButton(parent)
 {

@@ -169,6 +169,13 @@ void drawAppIcon(QPainter &painter, const QRectF &rect, AppIcon icon, const QCol
         painter.setBrush(color);
         painter.drawEllipse(QPointF(10, 10), 2.2, 2.2);
         break;
+    case AppIcon::Timer:
+        painter.drawEllipse(QPointF(10, 10.3), 6.1, 6.1);
+        painter.drawLine(QPointF(10, 4.4), QPointF(10, 5.8));
+        painter.drawLine(QPointF(8.6, 4.6), QPointF(11.4, 4.6));
+        painter.drawLine(QPointF(10, 10.3), QPointF(10, 7.2));
+        painter.drawLine(QPointF(10, 10.3), QPointF(13.5, 10.3));
+        break;
     }
 
     painter.restore();
