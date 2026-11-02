@@ -30,6 +30,9 @@ struct AppSettings {
     QString globalHotkey;
     // True after the first "still running in tray" balloon; never balloon again.
     bool trayHideHintShown = false;
+    // Default focus length for newly started clocks (TR #31). Running clocks keep
+    // the deadline they captured at start.
+    int pomodoroMinutes = kPomodoroDefaultMinutes;
     QHash<QString, bool> groupExpanded;
 };
 
@@ -130,6 +133,7 @@ public:
     void setPinned(bool pinned);
     void setGlobalHotkey(const QString &hotkey);
     void setTrayHideHintShown(bool shown);
+    void setPomodoroMinutes(int minutes);
     void setWindowState(const QRect &rect, const QString &screenName, int dockSide,
                         bool collapsed, bool pinned);
 

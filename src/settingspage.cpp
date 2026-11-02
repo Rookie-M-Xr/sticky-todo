@@ -209,6 +209,8 @@ void SettingsPage::buildUi()
     m_contentLayout->addWidget(buildGeneralCard());
     m_contentLayout->addWidget(sectionLabel(QStringLiteral("定时提醒"), m_content));
     m_contentLayout->addWidget(buildRemindersCard());
+    m_contentLayout->addWidget(sectionLabel(QStringLiteral("番茄钟"), m_content));
+    m_contentLayout->addWidget(buildPomodoroCard());
     m_contentLayout->addWidget(sectionLabel(QStringLiteral("汇报"), m_content));
     m_contentLayout->addWidget(buildReportsCard());
     m_contentLayout->addWidget(sectionLabel(QStringLiteral("窗口"), m_content));
@@ -374,6 +376,33 @@ QWidget *SettingsPage::buildRemindersCard()
     body->addWidget(m_reminderEmpty);
 
     rebuildReminderRows();
+    return card;
+}
+
+QWidget *SettingsPage::buildPomodoroCard()
+{
+    auto *card = new SettingsCard;
+    auto *body = card->body();
+
+    m_pomodoroSpin = new QSpinBox(card);
+    m_pomodoroSpin->setRange(kPomodoroMinMinutes, kPomodoroMaxMinutes);
+    m_pomodoroSpin->setValue(kPomodoroDefaultMinutes);
+    m_pomodoroSpin->setSuffix(QStringLiteral(" 分钟"));
+    m_pomodoroSpin->setFixedWidth(96);
+    m_pomodoroSpin->setFocusPolicy(Qt::ClickFocus);
+    m_pomodoroSpin->setToolTip(QStringLiteral("最短 1 分钟，最长 120 分钟。只影响新开的钟。"));
+    m_pomodoroSpin->setStyleSheet(QStringLiteral(
+        "QSpinBox { border: 1px solid rgba(169,154,120,0.58); border-radius: 8px; "
+        "background: rgba(255,255,255,0.35); color: #4f4a3d; padding: 2px 6px; min-height: 24px; }"
+        "QSpinBox::up-button, QSpinBox::down-button { width: 16px; }"));
+    auto *row = new SettingRow(QStringLiteral("默认时长"),
+                               QStringLiteral("新开钟用此时长；进行中的钟不改"),
+                               m_pomodoroSpin, card);
+    body->addWidget(row);
+    connect(m_pomodoroSpin, qOverload<int>(&QSpinBox::valueChanged), this, [this](int value) {
+        if (!m_syncing)
+            m_store->setPomodoroMinutes(value);
+    });
     return card;
 }
 
@@ -794,6 +823,8 @@ void SettingsPage::refresh()
     m_dockRight->setChecked(settings.dockSide == 2);
     if (m_retentionSpin)
         m_retentionSpin->setValue(settings.retentionDays);
+    if (m_pomodoroSpin)
+        m_pomodoroSpin->setValue(settings.pomodoroMinutes);
 
     rebuildReminderRows();
 

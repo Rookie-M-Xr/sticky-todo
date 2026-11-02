@@ -429,6 +429,16 @@ void DataStore::setRetentionDays(int days)
     emit settingsChanged();
 }
 
+void DataStore::setPomodoroMinutes(int minutes)
+{
+    const int next = clampPomodoroMinutes(minutes);
+    if (m_settings.pomodoroMinutes == next)
+        return;
+    m_settings.pomodoroMinutes = next;
+    scheduleSettingsSave(0);
+    emit settingsChanged();
+}
+
 void DataStore::setShowDailyReport(bool on)
 {
     if (m_settings.showDailyReport == on)
@@ -945,6 +955,7 @@ void DataStore::saveSettingsNow()
     root.insert(QStringLiteral("draft"), m_settings.draft);
     root.insert(QStringLiteral("globalHotkey"), m_settings.globalHotkey);
     root.insert(QStringLiteral("trayHideHintShown"), m_settings.trayHideHintShown);
+    root.insert(QStringLiteral("pomodoroMinutes"), m_settings.pomodoroMinutes);
     root.insert(QStringLiteral("draftDue"),
                 m_settings.draftDue.isValid() ? m_settings.draftDue.toString(Qt::ISODate) : QString());
 
@@ -1141,6 +1152,8 @@ void DataStore::loadSettings()
         settings->draft = root.value(QStringLiteral("draft")).toString().left(1000);
         settings->globalHotkey = root.value(QStringLiteral("globalHotkey")).toString().trimmed();
         settings->trayHideHintShown = root.value(QStringLiteral("trayHideHintShown")).toBool(false);
+        settings->pomodoroMinutes = clampPomodoroMinutes(
+            root.value(QStringLiteral("pomodoroMinutes")).toInt(kPomodoroDefaultMinutes));
         const QString dueText = root.value(QStringLiteral("draftDue")).toString();
         settings->draftDue = QDate::fromString(dueText, Qt::ISODate);
         if (!settings->draftDue.isValid())

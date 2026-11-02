@@ -647,6 +647,17 @@ void testPomodoroHelpers()
 {
     const int before = g_failed;
     expect(kPomodoroDefaultSeconds == 25 * 60, "pomo: default 25 minutes");
+    expect(kPomodoroDefaultMinutes == 25, "pomo: default minutes 25");
+    expect(clampPomodoroMinutes(0) == 1, "pomo: clamp low");
+    expect(clampPomodoroMinutes(-8) == 1, "pomo: clamp negative");
+    expect(clampPomodoroMinutes(25) == 25, "pomo: clamp 25");
+    expect(clampPomodoroMinutes(120) == 120, "pomo: clamp 120");
+    expect(clampPomodoroMinutes(121) == 120, "pomo: clamp high");
+    expect(pomodoroSecondsForMinutes(1) == 60, "pomo: 1 min = 60s");
+    expect(pomodoroSecondsForMinutes(50) == 50 * 60, "pomo: 50 min seconds");
+    expect(pomodoroSecondsForMinutes(999) == 120 * 60, "pomo: high minutes clamped");
+    expect(formatPomodoroStartHint(50) == QStringLiteral("开始番茄钟（50 分钟）"),
+           "pomo: start hint 50");
     expect(formatPomodoroClock(25 * 60) == QStringLiteral("25:00"), "pomo: format 25:00");
     expect(formatPomodoroClock(61) == QStringLiteral("01:01"), "pomo: format 01:01");
     expect(formatPomodoroClock(9) == QStringLiteral("00:09"), "pomo: format 00:09");
@@ -743,6 +754,86 @@ void testPomodoroDoesNotTouchTodos()
 
     if (g_failed == before)
         pass("pomodoro session fields ignored; todos survive edits");
+}
+
+void testPomodoroMinutesPersist()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "pomo-min: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    const QString settingsFile = QDir(dataDir).filePath(QStringLiteral("settings.json"));
+    const QString todosFile = QDir(dataDir).filePath(QStringLiteral("todos.json"));
+
+    {
+        DataStore store;
+        expect(store.load(), "pomo-min: load");
+        expect(store.settings().pomodoroMinutes == kPomodoroDefaultMinutes,
+               "pomo-min: default 25");
+        store.setPomodoroMinutes(0);
+        expect(store.settings().pomodoroMinutes == 1, "pomo-min: clamp 0 -> 1");
+        store.setPomodoroMinutes(999);
+        expect(store.settings().pomodoroMinutes == 120, "pomo-min: clamp 999 -> 120");
+        store.setPomodoroMinutes(50);
+        expect(store.settings().pomodoroMinutes == 50, "pomo-min: set 50");
+        expect(store.flush(), "pomo-min: flush");
+        expect(QFile::exists(settingsFile), "pomo-min: settings.json in data dir");
+        expect(settingsFile.startsWith(dataDir), "pomo-min: not install/config path");
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "pomo-min: reload");
+        expect(store.settings().pomodoroMinutes == 50, "pomo-min: 50 persisted");
+        const QString id = store.addTodo(QStringLiteral("focus"), QDate::currentDate());
+        expect(!id.isEmpty(), "pomo-min: seed todo");
+        expect(store.flush(), "pomo-min: flush todo");
+    }
+
+    {
+        QFile file(settingsFile);
+        expect(file.open(QIODevice::ReadOnly), "pomo-min: read settings");
+        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        file.close();
+        QJsonObject root = doc.object();
+        expect(root.value(QStringLiteral("pomodoroMinutes")).toInt() == 50,
+               "pomo-min: json has 50");
+        root.remove(QStringLiteral("pomodoroMinutes"));
+        expect(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "pomo-min: rewrite missing");
+        file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+        file.close();
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "pomo-min: load missing key");
+        expect(store.settings().pomodoroMinutes == kPomodoroDefaultMinutes,
+               "pomo-min: missing key -> 25");
+    }
+
+    {
+        QFile file(settingsFile);
+        expect(file.open(QIODevice::ReadOnly), "pomo-min: read for out-of-range");
+        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        file.close();
+        QJsonObject root = doc.object();
+        root.insert(QStringLiteral("pomodoroMinutes"), 0);
+        expect(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "pomo-min: write 0");
+        file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+        file.close();
+    }
+
+    {
+        DataStore store;
+        expect(store.load(), "pomo-min: load zero");
+        expect(store.settings().pomodoroMinutes == 1, "pomo-min: stored 0 clamps to 1");
+        expect(QFile::exists(todosFile), "pomo-min: todos.json untouched path");
+    }
+
+    if (g_failed == before)
+        pass("pomodoro default minutes persist + clamp");
 }
 
 void testReminderHelpers()
@@ -1063,6 +1154,7 @@ int main(int argc, char *argv[])
     testTrayHideHintPersist();
     testPomodoroHelpers();
     testPomodoroDoesNotTouchTodos();
+    testPomodoroMinutesPersist();
     testReminderHelpers();
     testReminderStorePersistAndDisable();
     testReminderDueThenMarkFired();

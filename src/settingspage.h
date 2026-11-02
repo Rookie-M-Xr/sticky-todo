@@ -39,6 +39,7 @@ private:
     void buildUi();
     QWidget *buildGeneralCard();
     QWidget *buildRemindersCard();
+    QWidget *buildPomodoroCard();
     QWidget *buildReportsCard();
     QWidget *buildWindowCard();
     QWidget *buildDataCard();
@@ -70,6 +71,7 @@ private:
     TextAction *m_archiveExpiredAction = nullptr;
     TextAction *m_importAllArchivedAction = nullptr;
     TextAction *m_importPickArchivedAction = nullptr;
+    QSpinBox *m_pomodoroSpin = nullptr;
     QSpinBox *m_reminderInterval = nullptr;
     QLineEdit *m_reminderText = nullptr;
     TextAction *m_reminderAddAction = nullptr;

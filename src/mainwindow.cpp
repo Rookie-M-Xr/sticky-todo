@@ -347,6 +347,8 @@ MainWindow::MainWindow(QWidget *parent)
             applyTopMost();
         if (s.autoHide && isDocked() && !m_collapsed && !m_pinned)
             startCollapseCountdown(600);
+        // Refresh start-hint labels only. A running clock keeps its captured deadline.
+        applyPomodoroToView();
     });
     connect(m_store, &DataStore::errorOccurred, this, [this](const QString &message) {
         if (m_collapsed)
@@ -2616,7 +2618,9 @@ void MainWindow::startPomodoro(const QString &id)
     if (id.isEmpty() || !m_store || !m_store->findTodo(id))
         return;
     m_pomodoroId = id;
-    m_pomodoroDeadline = QDateTime::currentDateTime().addSecs(kPomodoroDefaultSeconds);
+    m_pomodoroSessionMinutes = clampPomodoroMinutes(m_store->settings().pomodoroMinutes);
+    m_pomodoroDeadline = QDateTime::currentDateTime().addSecs(
+        pomodoroSecondsForMinutes(m_pomodoroSessionMinutes));
     if (!m_pomodoroTick) {
         m_pomodoroTick = new QTimer(this);
         m_pomodoroTick->setInterval(1000);
@@ -2632,6 +2636,7 @@ void MainWindow::stopPomodoro()
     const bool wasRunning = !m_pomodoroId.isEmpty();
     m_pomodoroId.clear();
     m_pomodoroDeadline = QDateTime();
+    m_pomodoroSessionMinutes = kPomodoroDefaultMinutes;
     if (m_pomodoroTick)
         m_pomodoroTick->stop();
     if (!wasRunning)
@@ -2650,10 +2655,11 @@ void MainWindow::onPomodoroTick()
     }
     if (pomodoroSecondsLeft() <= 0) {
         QString text;
+        const int minutes = m_pomodoroSessionMinutes;
         if (const TodoItem *item = m_store->findTodo(m_pomodoroId))
             text = item->text;
         stopPomodoro();
-        notifyPomodoroFinished(text);
+        notifyPomodoroFinished(text, minutes);
         return;
     }
     applyPomodoroToView();
@@ -2664,15 +2670,19 @@ void MainWindow::applyPomodoroToView()
 {
     if (!m_todosView)
         return;
+    const int minutes = m_store ? m_store->settings().pomodoroMinutes : kPomodoroDefaultMinutes;
+    m_todosView->setPomodoroDefaultMinutes(minutes);
     m_todosView->setPomodoro(m_pomodoroId, pomodoroSecondsLeft());
 }
 
-void MainWindow::notifyPomodoroFinished(const QString &text)
+void MainWindow::notifyPomodoroFinished(const QString &text, int minutes)
 {
     const QString label = text.trimmed().isEmpty()
         ? QStringLiteral("这条待办")
         : elidedOneLine(text, 28, Theme::uiFont(12));
-    const QString message = QStringLiteral("「%1」的 25 分钟到了").arg(label);
+    const QString message = QStringLiteral("「%1」的 %2 分钟到了")
+                                .arg(label)
+                                .arg(clampPomodoroMinutes(minutes));
     if (m_collapsed)
         expandFromTab(false);
     if (!isVisible() || isMinimized())
