@@ -27,6 +27,7 @@
 - 本版范围内 TR：无 `doing` / `test`；验收过的已关。
 - `python test_datastore.py` 绿。
 - 小皮在频道声明「发 vX.Y.Z，范围 …」后再切。
+- **User 手测门禁（硬门槛）**：正式发版（打 annotated tag / 建 GitHub Release / 上传双端资产）之前，必须在频道 **@User** 确认；**仅当 User 手测 PASS** 后才能继续 tag/Release。小皮拍板 + 小测冒烟**不够**，缺 User 手测不得发版。
 
 ## 劳模发布步骤（顺序）
 
@@ -34,6 +35,7 @@
 2. **写说明**：
    - `CHANGELOG.md` 增一节 `## vX.Y.Z`（日期 Asia/Shanghai + 本版关闭的 TR 列表 + 已知限制一行）。CHANGELOG **可以**偏工程（TR、tip SHA、内部缺口）。
    - GitHub Release 正文**另写**，按下方「Release 正文（GitHub，中文用户向）」；**禁止**把 CHANGELOG 该节原样粘进 Release。
+**2.5. User 手测**：频道 @User；把本版 tip 同步到 `D:\cache-deepseekHarness\defalut\sticky-todo\dist` 供手测；**未获 User PASS 禁止**进入下一步打 tag / 建 Release。
 3. **提交**：`chore: 发布 vX.Y.Z`（`Refs` 发布管理 TR）；推 `master`。
 4. **打 tag**：`git tag -a vX.Y.Z -m "Sticky Todo vX.Y.Z"` → **`git push origin vX.Y.Z`**（远程必须有该 tag）。
 5. **出包**（文件名必须带版本）：
