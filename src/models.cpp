@@ -33,6 +33,8 @@ QJsonObject TodoItem::toJson() const
     object.insert(QStringLiteral("completedAt"),
                   completedAt.isValid() ? completedAt.toString(Qt::ISODateWithMs) : QString());
     object.insert(QStringLiteral("updatedAt"), updatedAt.toString(Qt::ISODateWithMs));
+    object.insert(QStringLiteral("pinnedAt"),
+                  pinnedAt.isValid() ? pinnedAt.toString(Qt::ISODateWithMs) : QString());
     return object;
 }
 
@@ -65,6 +67,8 @@ TodoItem TodoItem::fromJson(const QJsonObject &object, bool *ok)
         if (!item.completedAt.isValid())
             item.completedAt = item.updatedAt;
     }
+    // Missing / empty / unreadable pinnedAt → unpinned (legacy todos.json).
+    item.pinnedAt = parseDateTime(object.value(QStringLiteral("pinnedAt")).toString());
 
     if (item.text.size() > 4000)
         item.text = item.text.left(4000);
@@ -148,6 +152,7 @@ QDate reportWeekEnd(QDate day)
 const QVector<GroupInfo> &allGroups()
 {
     static const QVector<GroupInfo> groups = {
+        {GroupId::Pinned, QStringLiteral("pinned"), QStringLiteral("置顶")},
         {GroupId::Overdue, QStringLiteral("overdue"), QStringLiteral("已逾期")},
         {GroupId::Today, QStringLiteral("today"), QStringLiteral("今天")},
         {GroupId::Tomorrow, QStringLiteral("tomorrow"), QStringLiteral("明天")},
@@ -190,6 +195,10 @@ int groupOrder(GroupId id)
 
 GroupId groupFor(const TodoItem &item, QDate today)
 {
+    // Incomplete pins leave their date group so they stay at the top of the
+    // incomplete list. Completed pins stay on the timeline (unpin restores).
+    if (!item.completed && item.isPinned())
+        return GroupId::Pinned;
     if (!item.dueDate.isValid())
         return GroupId::NoDate;
     if (item.dueDate < today)
@@ -227,7 +236,14 @@ QVector<TodoGroup> buildGroups(const QVector<TodoItem> &items, QDate today, cons
     }
 
     for (TodoGroup &group : groups) {
-        std::sort(group.items.begin(), group.items.end(), [](const TodoItem &a, const TodoItem &b) {
+        std::sort(group.items.begin(), group.items.end(),
+                  [groupId = group.id](const TodoItem &a, const TodoItem &b) {
+            // TR #60: newest pin first among incomplete pins; id is the tie-break.
+            if (groupId == GroupId::Pinned) {
+                if (a.pinnedAt != b.pinnedAt)
+                    return a.pinnedAt > b.pinnedAt;
+                return a.id < b.id;
+            }
             if (a.dueDate.isValid() != b.dueDate.isValid())
                 return a.dueDate.isValid();
             if (a.dueDate.isValid() && a.dueDate != b.dueDate)

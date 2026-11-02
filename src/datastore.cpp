@@ -403,6 +403,25 @@ bool DataStore::setCompleted(const QString &id, bool completed, QDateTime *compl
     return false;
 }
 
+bool DataStore::setTodoPinned(const QString &id, bool pinned)
+{
+    if (id.isEmpty())
+        return false;
+    for (TodoItem &item : m_todos) {
+        if (item.id != id)
+            continue;
+        if (item.isPinned() == pinned)
+            return true;
+        const QDateTime now = QDateTime::currentDateTime();
+        item.pinnedAt = pinned ? now : QDateTime();
+        item.updatedAt = now;
+        scheduleTodosSave(0);
+        emit todosChanged();
+        return true;
+    }
+    return false;
+}
+
 bool DataStore::removeTodo(const QString &id, TodoItem *removed, int *removedIndex)
 {
     for (int i = 0; i < m_todos.size(); ++i) {

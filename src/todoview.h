@@ -37,6 +37,7 @@ signals:
     void pomodoroToggleRequested(const QString &id);
     void pomodoroStopRequested(const QString &id);
     void archiveRequested(const QString &id);
+    void pinToggleRequested(const QString &id);
     void editingStarted();
 
 protected:
@@ -121,6 +122,7 @@ signals:
     void pomodoroToggleRequested(const QString &id);
     void pomodoroStopRequested(const QString &id);
     void archiveRequested(const QString &id);
+    void pinToggleRequested(const QString &id);
     void expansionChanged(GroupId id, bool expanded);
 
 private:
@@ -157,6 +159,7 @@ signals:
     void pomodoroToggleRequested(const QString &id);
     void pomodoroStopRequested(const QString &id);
     void archiveRequested(const QString &id);
+    void pinToggleRequested(const QString &id);
     void groupExpansionChanged(GroupId id, bool expanded);
     void clearSearch();
     void composeRequested();

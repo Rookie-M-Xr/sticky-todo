@@ -380,6 +380,10 @@ void TodoRow::paintEvent(QPaintEvent *event)
         painter.setPen(Qt::NoPen);
         painter.setBrush(QColor(220, 226, 194, (m_hover || hasFocus() || m_editing) ? 140 : 92));
         painter.drawRoundedRect(QRectF(rect()).adjusted(2, 3, -2, -3), 9, 9);
+    } else if (m_item.isPinned() && !m_item.completed) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(233, 216, 171, (m_hover || hasFocus() || m_editing) ? 120 : 72));
+        painter.drawRoundedRect(QRectF(rect()).adjusted(2, 3, -2, -3), 9, 9);
     } else if (m_hover || hasFocus() || m_editing) {
         painter.setPen(Qt::NoPen);
         painter.setBrush(QColor(255, 255, 255, m_editing ? 100 : 56));
@@ -540,6 +544,9 @@ void TodoRow::openContextMenu(const QPoint &globalPos)
         makeIcon(AppIcon::Check, 14, Theme::AccentDark),
         m_item.completed ? QStringLiteral("恢复为未完成") : QStringLiteral("标记为已完成"));
     menu.addSeparator();
+    QAction *pinAction = menu.addAction(
+        makeIcon(AppIcon::Pin, 14, Theme::AccentDark),
+        m_item.isPinned() ? QStringLiteral("取消置顶") : QStringLiteral("置顶"));
     QAction *archiveAction = menu.addAction(makeIcon(AppIcon::External, 14, Theme::InkSoft),
                                             QStringLiteral("归档"));
     QAction *deleteAction = menu.addAction(makeIcon(AppIcon::Trash, 14, Theme::Danger),
@@ -558,6 +565,8 @@ void TodoRow::openContextMenu(const QPoint &globalPos)
         emit pomodoroStopRequested(m_item.id);
     else if (chosen == toggleAction)
         emit completionRequested(m_item.id, !m_item.completed);
+    else if (chosen == pinAction)
+        emit pinToggleRequested(m_item.id);
     else if (chosen == archiveAction)
         emit archiveRequested(m_item.id);
     else if (chosen == deleteAction)
@@ -708,7 +717,9 @@ void GroupHeader::paintEvent(QPaintEvent *event)
     QFont titleFont = Theme::uiFont(12, QFont::DemiBold);
     const QFontMetrics titleMetrics(titleFont);
     QColor titleColor = m_hover ? Theme::AccentDark : Theme::InkSoft;
-    if (m_id == GroupId::Overdue && m_count > 0)
+    if (m_id == GroupId::Pinned)
+        titleColor = Theme::AccentDark;
+    else if (m_id == GroupId::Overdue && m_count > 0)
         titleColor = Theme::Danger;
     else if (m_id == GroupId::PastCompleted)
         titleColor = Theme::Faint;
@@ -786,6 +797,7 @@ GroupSection::GroupSection(const TodoGroup &group, bool expanded, QWidget *paren
         connect(row, &TodoRow::pomodoroToggleRequested, this, &GroupSection::pomodoroToggleRequested);
         connect(row, &TodoRow::pomodoroStopRequested, this, &GroupSection::pomodoroStopRequested);
         connect(row, &TodoRow::archiveRequested, this, &GroupSection::archiveRequested);
+        connect(row, &TodoRow::pinToggleRequested, this, &GroupSection::pinToggleRequested);
         m_contentLayout->addWidget(row);
     }
     root->addWidget(m_content);
@@ -978,6 +990,7 @@ void TodoScrollView::connectSection(GroupSection *section)
     connect(section, &GroupSection::pomodoroStopRequested, this,
             &TodoScrollView::pomodoroStopRequested);
     connect(section, &GroupSection::archiveRequested, this, &TodoScrollView::archiveRequested);
+    connect(section, &GroupSection::pinToggleRequested, this, &TodoScrollView::pinToggleRequested);
     connect(section, &GroupSection::expansionChanged, this, &TodoScrollView::groupExpansionChanged);
 }
 
