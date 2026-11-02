@@ -358,8 +358,7 @@ bool parseReminderTime(const QString &text, int *minutes, bool allowEndOfDay)
 bool reminderWindowValid(int startMinutes, int endMinutes)
 {
     return startMinutes >= 0 && startMinutes < kReminderDayMinutes
-        && endMinutes > 0 && endMinutes <= kReminderDayMinutes
-        && startMinutes < endMinutes;
+        && endMinutes >= 0 && endMinutes <= kReminderDayMinutes;
 }
 
 int reminderTimeToMinutes(const QTime &time)
@@ -379,7 +378,9 @@ bool reminderInActiveWindow(const ReminderItem &item, const QDateTime &now)
     const int nowMsecs = origin.time().msecsSinceStartOfDay();
     const int startMsecs = item.activeStartMinutes * 60 * 1000;
     const int endMsecs = item.activeEndMinutes * 60 * 1000;
-    return nowMsecs >= startMsecs && nowMsecs < endMsecs;
+    if (item.activeStartMinutes < item.activeEndMinutes)
+        return nowMsecs >= startMsecs && nowMsecs < endMsecs;
+    return nowMsecs >= startMsecs || nowMsecs < endMsecs;
 }
 
 QDateTime reminderAnchor(const ReminderItem &item)
