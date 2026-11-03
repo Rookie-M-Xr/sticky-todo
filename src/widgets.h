@@ -7,13 +7,18 @@
 #include <QColor>
 #include <QDate>
 #include <QPair>
+#include <QPoint>
 #include <QVector>
 #include <QWidget>
 
 #include <functional>
 
+class QEvent;
+class QHideEvent;
+class QKeyEvent;
 class QLabel;
 class QLineEdit;
+class QPaintEvent;
 class QPushButton;
 class QTimer;
 class QGraphicsOpacityEffect;
@@ -229,6 +234,40 @@ private:
     int m_timeoutMs = 0;
     int m_labelLines = 1;
     bool m_hiding = false;
+};
+
+class QuickAddPopup : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit QuickAddPopup(QWidget *parent = nullptr);
+
+    void openNear(const QPoint &globalPos);
+    QString text() const;
+    void setText(const QString &text);
+    QLineEdit *lineEdit() const { return m_edit; }
+
+    void confirm();
+    void cancel();
+
+signals:
+    void accepted(const QString &text);
+    void cancelled();
+
+protected:
+    void paintEvent(QPaintEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
+    void changeEvent(QEvent *event) override;
+
+private:
+    void finish(bool accept);
+
+    QLineEdit *m_edit = nullptr;
+    TextAction *m_confirm = nullptr;
+    TextAction *m_cancel = nullptr;
+    bool m_closing = false;
+    bool m_ignoreDeactivate = false;
 };
 
 class SideNavBar : public QWidget

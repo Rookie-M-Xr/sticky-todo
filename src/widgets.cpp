@@ -7,7 +7,9 @@
 #include <QEnterEvent>
 #include <QFontMetrics>
 #include <QGraphicsOpacityEffect>
+#include <QGuiApplication>
 #include <QButtonGroup>
+#include <QHideEvent>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -21,6 +23,7 @@
 #include <QPropertyAnimation>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QScreen>
 #include <QSignalBlocker>
 #include <QStringList>
 #include <QTextLayout>
@@ -29,6 +32,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <utility>
 
 PaperCard::PaperCard(QWidget *parent)
@@ -1107,4 +1111,181 @@ void SideNavBar::paintEvent(QPaintEvent *event)
                         1.0));
     const qreal x = width() - 0.5;
     painter.drawLine(QPointF(x, 8), QPointF(x, height() - 10));
+}
+
+QuickAddPopup::QuickAddPopup(QWidget *parent)
+    : QWidget(parent, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint
+                          | Qt::NoDropShadowWindowHint)
+{
+    setObjectName(QStringLiteral("quickAddPopup"));
+    setAttribute(Qt::WA_DeleteOnClose, false);
+    setAttribute(Qt::WA_QuitOnClose, false);
+    setAttribute(Qt::WA_TranslucentBackground);
+    setAttribute(Qt::WA_ShowWithoutActivating, false);
+    setFocusPolicy(Qt::StrongFocus);
+    setWindowTitle(QStringLiteral("快速添加"));
+    setFixedSize(316, 138);
+    setPalette(Theme::applicationPalette());
+
+    auto *root = new QVBoxLayout(this);
+    root->setContentsMargins(22, 18, 22, 16);
+    root->setSpacing(8);
+
+    auto *title = new QLabel(QStringLiteral("快速添加"), this);
+    title->setFont(Theme::uiFont(13, QFont::DemiBold));
+    title->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(Theme::Ink.name()));
+    root->addWidget(title);
+
+    m_edit = new QLineEdit(this);
+    m_edit->setObjectName(QStringLiteral("quickAddEdit"));
+    m_edit->setFont(Theme::uiFont(13));
+    m_edit->setPlaceholderText(QStringLiteral("写下一件要做的事…"));
+    m_edit->setMaxLength(4000);
+    m_edit->setClearButtonEnabled(false);
+    m_edit->setFixedHeight(32);
+    m_edit->setStyleSheet(QStringLiteral(
+        "QLineEdit { background: rgba(255, 255, 255, 0.78); border: 1px solid #c9bd98; "
+        "border-radius: 8px; padding: 4px 8px; "
+        "selection-background-color: #dce2c2; selection-color: #3b382e; }"));
+    QPalette editPalette = m_edit->palette();
+    editPalette.setColor(QPalette::Text, Theme::Ink);
+    editPalette.setColor(QPalette::PlaceholderText, QColor(158, 148, 123));
+    m_edit->setPalette(editPalette);
+    root->addWidget(m_edit);
+
+    auto *row = new QHBoxLayout;
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(14);
+    row->addStretch(1);
+    m_cancel = new TextAction(QStringLiteral("取消"), this);
+    m_cancel->setObjectName(QStringLiteral("quickAddCancel"));
+    m_cancel->setFont(Theme::uiFont(12));
+    m_cancel->setColors(Theme::Muted, Theme::InkSoft);
+    m_confirm = new TextAction(QStringLiteral("添加"), this);
+    m_confirm->setObjectName(QStringLiteral("quickAddConfirm"));
+    m_confirm->setFont(Theme::uiFont(12, QFont::DemiBold));
+    m_confirm->setColors(Theme::AccentDark, Theme::Accent);
+    row->addWidget(m_cancel, 0, Qt::AlignVCenter);
+    row->addWidget(m_confirm, 0, Qt::AlignVCenter);
+    root->addLayout(row);
+
+    connect(m_edit, &QLineEdit::returnPressed, this, &QuickAddPopup::confirm);
+    connect(m_confirm, &QAbstractButton::clicked, this, &QuickAddPopup::confirm);
+    connect(m_cancel, &QAbstractButton::clicked, this, &QuickAddPopup::cancel);
+}
+
+void QuickAddPopup::openNear(const QPoint &globalPos)
+{
+    m_closing = false;
+    m_ignoreDeactivate = true;
+    m_edit->clear();
+    const QSize popupSize = size();
+    QScreen *screen = QGuiApplication::screenAt(globalPos);
+    if (!screen)
+        screen = QGuiApplication::primaryScreen();
+    const QRect available = screen ? screen->availableGeometry() : QRect(0, 0, 1920, 1080);
+
+    int x = globalPos.x() - popupSize.width() / 2;
+    int y = globalPos.y() + 8;
+    if (y + popupSize.height() > available.bottom() + 1)
+        y = globalPos.y() - popupSize.height() - 8;
+    x = std::clamp(x, available.left() + 4, qMax(available.left() + 4,
+                                                 available.right() - popupSize.width() - 3));
+    y = std::clamp(y, available.top() + 4, qMax(available.top() + 4,
+                                                available.bottom() - popupSize.height() - 3));
+    move(x, y);
+    show();
+    raise();
+    activateWindow();
+    m_edit->setFocus(Qt::PopupFocusReason);
+    QTimer::singleShot(180, this, [this] { m_ignoreDeactivate = false; });
+}
+
+QString QuickAddPopup::text() const
+{
+    return m_edit ? m_edit->text() : QString();
+}
+
+void QuickAddPopup::setText(const QString &text)
+{
+    if (m_edit)
+        m_edit->setText(text);
+}
+
+void QuickAddPopup::confirm()
+{
+    if (m_closing)
+        return;
+    const QString trimmed = text().trimmed();
+    if (trimmed.isEmpty()) {
+        if (m_edit)
+            m_edit->setFocus(Qt::OtherFocusReason);
+        return;
+    }
+    finish(true);
+}
+
+void QuickAddPopup::cancel()
+{
+    if (m_closing)
+        return;
+    finish(false);
+}
+
+void QuickAddPopup::finish(bool accept)
+{
+    m_closing = true;
+    m_ignoreDeactivate = true;
+    const QString trimmed = text().trimmed();
+    hide();
+    if (accept)
+        emit accepted(trimmed);
+    else
+        emit cancelled();
+}
+
+void QuickAddPopup::paintEvent(QPaintEvent *event)
+{
+    Q_UNUSED(event);
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const QRectF card = QRectF(rect()).adjusted(8, 7, -8, -7);
+    for (int i = 6; i >= 1; --i) {
+        const qreal spread = i * 1.0;
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(76, 66, 42, 4 + (6 - i)));
+        painter.drawRoundedRect(card.adjusted(-spread, -spread * 0.4, spread, spread + 2), 11 + i,
+                                11 + i);
+    }
+    painter.setPen(QPen(QColor(217, 203, 166), 1.0));
+    painter.setBrush(Theme::PaperTop);
+    painter.drawRoundedRect(card, 12, 12);
+}
+
+void QuickAddPopup::keyPressEvent(QKeyEvent *event)
+{
+    if (event->key() == Qt::Key_Escape) {
+        cancel();
+        event->accept();
+        return;
+    }
+    QWidget::keyPressEvent(event);
+}
+
+void QuickAddPopup::hideEvent(QHideEvent *event)
+{
+    QWidget::hideEvent(event);
+    if (!m_closing)
+        cancel();
+}
+
+void QuickAddPopup::changeEvent(QEvent *event)
+{
+    QWidget::changeEvent(event);
+    if (event->type() != QEvent::ActivationChange)
+        return;
+    if (m_ignoreDeactivate || m_closing || !isVisible() || isActiveWindow())
+        return;
+    cancel();
 }

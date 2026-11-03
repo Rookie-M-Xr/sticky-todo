@@ -2114,6 +2114,53 @@ void testReminderWindowPersistAndLegacyMigrate()
         pass("reminder window persist + legacy migrate");
 }
 
+void testQuickAddMatchesComposerGrouping()
+{
+    const int before = g_failed;
+    const QDate today = QDate::currentDate();
+    expect(defaultNewTodoDue() == today, "quick-add: default due is today");
+    expect(defaultNewTodoDue(today) == today, "quick-add: explicit today");
+    expect(defaultNewTodoDue(QDate()) == today, "quick-add: invalid today falls back");
+
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "quick-add: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    DataStore store;
+    expect(store.load(), "quick-add: load");
+    const int startCount = store.todos().size();
+    expect(store.addTodo(QStringLiteral("   \t  "), defaultNewTodoDue(today)).isEmpty(),
+           "quick-add: whitespace does not write");
+    expect(store.todos().size() == startCount, "quick-add: still empty after blank");
+
+    const QString id = store.addTodo(QStringLiteral("  tray-quick  "), defaultNewTodoDue(today));
+    expect(!id.isEmpty(), "quick-add: id");
+    const TodoItem *item = store.findTodo(id);
+    expect(item != nullptr, "quick-add: stored");
+    expect(item && item->text == QStringLiteral("tray-quick"), "quick-add: trimmed text");
+    expect(item && !item->completed, "quick-add: incomplete");
+    expect(item && !item->completedAt.isValid(), "quick-add: no completedAt");
+    expect(item && item->dueDate == today, "quick-add: due today");
+    expect(item && groupFor(*item, today) == GroupId::Today, "quick-add: Today group");
+    expect(store.todos().size() == startCount + 1, "quick-add: one row written");
+    expect(store.flush(), "quick-add: flush");
+
+    {
+        DataStore reload;
+        expect(reload.load(), "quick-add: reload");
+        const TodoItem *again = reload.findTodo(id);
+        expect(again && again->text == QStringLiteral("tray-quick") && !again->completed
+                   && again->dueDate == today,
+               "quick-add: persist incomplete today item");
+        expect(again && groupFor(*again, today) == GroupId::Today,
+               "quick-add: persisted item still Today");
+    }
+
+    if (g_failed == before)
+        pass("tray quick-add matches composer today/incomplete grouping");
+}
+
 void testTooltipChromeContract()
 {
     const int before = g_failed;
@@ -2177,6 +2224,7 @@ int main(int argc, char *argv[])
     testReminderCapAndSkipInvalid();
     testReminderActiveWindowAndInterval();
     testReminderWindowPersistAndLegacyMigrate();
+    testQuickAddMatchesComposerGrouping();
     testTooltipChromeContract();
 
     if (g_failed != 0) {
