@@ -210,6 +210,34 @@ int groupHeaderCount(const TodoGroup &group)
     return group.pendingCount;
 }
 
+StandingTodoCounts countStandingTodos(const QVector<TodoItem> &items, QDate today)
+{
+    if (!today.isValid())
+        today = QDate::currentDate();
+    StandingTodoCounts counts;
+    for (const TodoItem &item : items) {
+        if (item.completed)
+            continue;
+        if (item.isOverdue(today))
+            ++counts.overdue;
+        else if (item.dueDate.isValid() && item.dueDate == today)
+            ++counts.todayOpen;
+    }
+    return counts;
+}
+
+QString formatStandingTodoStatus(StandingTodoCounts counts)
+{
+    return QStringLiteral("今日未办 %1 · 逾期 %2")
+        .arg(qMax(0, counts.todayOpen))
+        .arg(qMax(0, counts.overdue));
+}
+
+QString formatStandingTodoStatus(const QVector<TodoItem> &items, QDate today)
+{
+    return formatStandingTodoStatus(countStandingTodos(items, today));
+}
+
 GroupId groupFor(const TodoItem &item, QDate today)
 {
     // #79: every completed item (including completed pins) leaves the
