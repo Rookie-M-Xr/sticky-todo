@@ -6,6 +6,7 @@
 #include <QLabel>
 #include <QList>
 #include <QPushButton>
+#include <QStringList>
 #include <QWidget>
 
 #include <cstdio>
@@ -31,9 +32,15 @@ void pass(const char *msg)
 QVector<QPair<QString, std::function<void()>>> snoozeActions()
 {
     QVector<QPair<QString, std::function<void()>>> actions;
-    actions.append({QStringLiteral("延后 5"), [] {}});
-    actions.append({QStringLiteral("延后 10"), [] {}});
-    actions.append({QStringLiteral("延后 15"), [] {}});
+    for (int minutes : kReminderSnoozePresets)
+        actions.append({reminderSnoozePresetLabel(minutes), [] {}});
+    return actions;
+}
+
+QVector<QPair<QString, std::function<void()>>> dismissAction()
+{
+    QVector<QPair<QString, std::function<void()>>> actions;
+    actions.append({reminderDismissLabel(), [] {}});
     return actions;
 }
 
@@ -52,9 +59,18 @@ QList<QPushButton *> visibleActionButtons(Snackbar *bar)
 
 void fireOnCard(Snackbar *bar, const QString &title, int width)
 {
-    bar->showActions(reminderFireLabel(title), snoozeActions(), 0, reminderSnoozeMenuLabel());
+    bar->showActions(reminderFireLabel(title), snoozeActions(), 0, reminderSnoozeMenuLabel(),
+                     dismissAction(), reminderCustomSnoozePlaceholder(), [](int) {});
     bar->setGeometry(18, 400, width, bar->height());
     QApplication::processEvents();
+}
+
+QStringList visibleButtonTexts(Snackbar *bar)
+{
+    QStringList texts;
+    for (QPushButton *button : visibleActionButtons(bar))
+        texts.append(button->text());
+    return texts;
 }
 
 void testMediumTitleReadable()
@@ -81,14 +97,15 @@ void testMediumTitleReadable()
         expect(label->text() == title, "snack-mid: full title visible");
     }
 
-    const QList<QPushButton *> buttons = visibleActionButtons(&bar);
-    expect(buttons.size() == 1, "snack-mid: snooze collapsed to one control");
-    if (buttons.size() == 1)
-        expect(buttons.front()->text() == reminderSnoozeMenuLabel(),
-               "snack-mid: overflow label 延后 ▾");
+    const QStringList texts = visibleButtonTexts(&bar);
+    expect(texts.size() == 2, "snack-mid: dismiss + snooze overflow");
+    expect(texts.contains(reminderDismissLabel()), "snack-mid: 忽略 visible");
+    expect(texts.contains(reminderSnoozeMenuLabel()), "snack-mid: overflow label 延后 ▾");
+    expect(!texts.contains(QStringLiteral("延后 5")),
+           "snack-mid: presets stay inside menu");
 
     if (g_failed == before)
-        pass("snackbar medium title readable (#77)");
+        pass("snackbar medium title readable (#77 + #68 dismiss)");
 }
 
 void testLongTitleHover()
@@ -113,10 +130,42 @@ void testLongTitleHover()
                "snack-long: overflow elided");
         expect(!label->text().contains(QStringLiteral("提醒：")), "snack-long: no prefix");
     }
-    expect(visibleActionButtons(&bar).size() == 1, "snack-long: still one snooze control");
+    expect(visibleActionButtons(&bar).size() == 2, "snack-long: dismiss + one snooze control");
+    expect(visibleButtonTexts(&bar).contains(reminderDismissLabel()),
+           "snack-long: 忽略 still visible");
 
     if (g_failed == before)
-        pass("snackbar long title start + tooltip (#77)");
+        pass("snackbar long title start + tooltip (#77 + #68)");
+}
+
+void testDismissClick()
+{
+    const int before = g_failed;
+    QWidget card;
+    card.resize(368, 508);
+    card.show();
+    Snackbar bar(&card);
+    bool ignored = false;
+    QVector<QPair<QString, std::function<void()>>> leading;
+    leading.append({reminderDismissLabel(), [&ignored] { ignored = true; }});
+    bar.showActions(reminderFireLabel(QStringLiteral("喝水")), snoozeActions(), 0,
+                    reminderSnoozeMenuLabel(), leading, reminderCustomSnoozePlaceholder(),
+                    [](int) {});
+    bar.setGeometry(18, 400, 332, bar.height());
+    QApplication::processEvents();
+
+    bool clicked = false;
+    for (QPushButton *button : visibleActionButtons(&bar)) {
+        if (button && button->text() == reminderDismissLabel()) {
+            button->click();
+            clicked = true;
+            break;
+        }
+    }
+    expect(clicked, "snack-dismiss: found 忽略");
+    expect(ignored, "snack-dismiss: click runs dismiss callback");
+    if (g_failed == before)
+        pass("snackbar dismiss this occurrence click (#68)");
 }
 
 void testEmptyFallback()
@@ -144,6 +193,7 @@ int main(int argc, char *argv[])
 
     testMediumTitleReadable();
     testLongTitleHover();
+    testDismissClick();
     testEmptyFallback();
 
     if (g_failed != 0) {

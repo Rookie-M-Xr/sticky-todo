@@ -40,10 +40,11 @@ struct DailySnapshot {
     static DailySnapshot fromJson(const QJsonObject &object, bool *ok = nullptr);
 };
 
-// Interval reminders (TR #19 + #42 + #50 + #51). Own file reminders.json — never a TodoItem field.
+// Interval reminders (TR #19 + #42 + #50 + #51 + #68). Own file reminders.json — never a TodoItem field.
 // Local-clock window: same-day [start, end) when start < end;
 // cross-midnight [start, 24:00) ∪ [00:00, end) when end <= start.
-// In-process snooze (TR #51) only shifts the next fire; never written to JSON.
+// In-process snooze (TR #51 + #68) only shifts the next fire; never written to JSON.
+// #68: any whole minute in [kReminderMinMinutes, kReminderMaxMinutes], not only presets.
 constexpr int kReminderMinMinutes = 1;
 constexpr int kReminderMaxMinutes = 7 * 24 * 60;
 constexpr int kReminderMaxText = 200;
@@ -53,7 +54,11 @@ constexpr int kReminderDefaultStartMinutes = 9 * 60;
 constexpr int kReminderDefaultEndMinutes = 18 * 60;
 constexpr int kReminderSnoozeMinutes5 = 5;
 constexpr int kReminderSnoozeMinutes10 = 10;
-constexpr int kReminderSnoozeMinutes15 = 15;
+constexpr int kReminderSnoozeMinutes30 = 30;
+constexpr int kReminderSnoozePresetCount = 3;
+constexpr int kReminderSnoozePresets[kReminderSnoozePresetCount] = {
+    kReminderSnoozeMinutes5, kReminderSnoozeMinutes10, kReminderSnoozeMinutes30
+};
 
 struct ReminderItem {
     QString id;
@@ -86,11 +91,17 @@ bool reminderIsDue(const ReminderItem &item, const QDateTime &now = QDateTime(),
                    const QDateTime &snoozeUntil = QDateTime());
 bool reminderSnoozeMinutesValid(int minutes);
 QDateTime reminderSnoozeUntil(const QDateTime &from, int minutes);
+// Whole minutes only. Accepts "7" / " 7 " / "7分钟". Rejects 0, range errors, junk.
+int parseReminderSnoozeMinutes(const QString &text, bool *ok = nullptr);
 // Fire-time banner copy (#77): the reminder text itself — no "提醒：" prefix
 // and no pre-elide. Empty/whitespace → "定时提醒". The snackbar wraps or
 // elides to the live label width and keeps this full string as the tooltip.
 QString reminderFireLabel(const QString &text);
 QString reminderSnoozeMenuLabel();
+QString reminderDismissLabel();
+QString reminderSnoozePresetLabel(int minutes);
+QString reminderCustomSnoozePlaceholder();
+QString reminderCustomSnoozeConfirmLabel();
 
 enum class ReportKind {
     Daily,

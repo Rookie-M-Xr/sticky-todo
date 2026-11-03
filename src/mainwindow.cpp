@@ -2892,14 +2892,17 @@ void MainWindow::notifyReminderDue(const QString &id, const QString &text)
         showAndActivate();
     if (m_snackbar) {
         stopCollapseCountdown();
+        QVector<QPair<QString, std::function<void()>>> leading;
+        leading.append({reminderDismissLabel(),
+                        [this, id] { dismissReminderOccurrence(id); }});
         QVector<QPair<QString, std::function<void()>>> actions;
-        const int presets[] = {kReminderSnoozeMinutes5, kReminderSnoozeMinutes10,
-                               kReminderSnoozeMinutes15};
-        for (int minutes : presets) {
-            actions.append({QStringLiteral("延后 %1").arg(minutes),
+        for (int minutes : kReminderSnoozePresets) {
+            actions.append({reminderSnoozePresetLabel(minutes),
                             [this, id, minutes] { snoozeReminder(id, minutes); }});
         }
-        m_snackbar->showActions(message, actions, 9000, reminderSnoozeMenuLabel());
+        m_snackbar->showActions(message, actions, 9000, reminderSnoozeMenuLabel(), leading,
+                                reminderCustomSnoozePlaceholder(),
+                                [this, id](int minutes) { snoozeReminder(id, minutes); });
         placeSnackbarOnCard(m_card, m_composerBar, m_snackbar);
         m_snackbar->raise();
     }
@@ -2919,6 +2922,20 @@ void MainWindow::snoozeReminder(const QString &id, int minutes)
         return;
     m_reminderSnoozeUntil.insert(id, until);
     showToast(QStringLiteral("已延后 %1 分钟").arg(minutes));
+}
+
+void MainWindow::dismissReminderOccurrence(const QString &id)
+{
+    // Fire already advanced lastFired. Ignore only this toast — do not
+    // disable the reminder or rewrite interval / window. Next cycle uses
+    // lastFired+interval (no in-process snooze override).
+    if (!m_store)
+        return;
+    const ReminderItem *item = m_store->findReminder(id);
+    if (!item)
+        return;
+    m_reminderSnoozeUntil.remove(id);
+    showToast(QStringLiteral("已忽略本次"));
 }
 
 void MainWindow::pruneReminderSnoozes()
