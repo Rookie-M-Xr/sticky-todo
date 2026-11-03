@@ -34,6 +34,7 @@ class SettingsPage;
 class DailyReportPage;
 class SideNavBar;
 class Snackbar;
+class QuickAddPopup;
 class TodoScrollView;
 class QWidget;
 
@@ -121,6 +122,8 @@ private:
     void finishQuit();
     void showToast(const QString &message, const QString &actionText = QString(),
                    std::function<void()> action = {}, int timeoutMs = 5000);
+    void openQuickAdd();
+    void handleQuickAddAccepted(const QString &text);
 
     void openCalendarForTodo(const QString &id, const QPoint &globalAnchor);
     void openCalendarForComposer();
@@ -185,6 +188,8 @@ private:
     QAction *m_trayAutoStartAction = nullptr;
     QAction *m_trayShowAction = nullptr;
     QAction *m_trayHideAction = nullptr;
+    QAction *m_trayQuickAddAction = nullptr;
+    QuickAddPopup *m_quickAdd = nullptr;
 
     CalendarPopup *m_calendar = nullptr;
     QTimer *m_refreshTimer = nullptr;

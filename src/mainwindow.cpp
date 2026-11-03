@@ -469,6 +469,11 @@ MainWindow::MainWindow(QWidget *parent)
 MainWindow::~MainWindow()
 {
     WinUtils::clearGlobalHotkey();
+    if (m_quickAdd) {
+        m_quickAdd->hide();
+        delete m_quickAdd;
+        m_quickAdd = nullptr;
+    }
     if (qApp)
         qApp->removeEventFilter(this);
     qApp->removeNativeEventFilter(this);
@@ -691,6 +696,9 @@ void MainWindow::buildTray()
     m_trayShowAction = m_trayMenu->addAction(QStringLiteral("显示便签"));
     m_trayHideAction = m_trayMenu->addAction(QStringLiteral("隐藏便签"));
     m_trayMenu->addSeparator();
+    m_trayQuickAddAction = m_trayMenu->addAction(QStringLiteral("快速添加"));
+    m_trayQuickAddAction->setObjectName(QStringLiteral("trayQuickAdd"));
+    m_trayMenu->addSeparator();
     auto *settingsAction = m_trayMenu->addAction(QStringLiteral("设置…"));
     m_trayAutoStartAction = m_trayMenu->addAction(QStringLiteral("开机自动启动"));
     m_trayAutoStartAction->setCheckable(true);
@@ -699,6 +707,11 @@ void MainWindow::buildTray()
 
     connect(m_trayShowAction, &QAction::triggered, this, &MainWindow::showAndActivate);
     connect(m_trayHideAction, &QAction::triggered, this, &MainWindow::hideToTray);
+    connect(m_trayQuickAddAction, &QAction::triggered, this, [this] {
+        // Let the tray menu finish closing before the input popup takes focus,
+        // otherwise the menu's deactivate can immediately cancel the popup.
+        QTimer::singleShot(0, this, &MainWindow::openQuickAdd);
+    });
     connect(settingsAction, &QAction::triggered, this, &MainWindow::openSettingsPage);
     connect(m_trayAutoStartAction, &QAction::toggled, this, [this](bool on) {
         applyAutoStart(on, false);
@@ -2403,6 +2416,11 @@ void MainWindow::finishQuit()
         calendar->hide();
         calendar->deleteLater();
     }
+    if (m_quickAdd) {
+        m_quickAdd->hide();
+        m_quickAdd->deleteLater();
+        m_quickAdd = nullptr;
+    }
     WinUtils::removeTrayIcon(this);
     m_trayInstalled = false;
     // Hide before quit so platforms with QuitOnLastWindowClosed=false still
@@ -2514,6 +2532,36 @@ void MainWindow::openCalendarForComposer()
                        m_composerDate->setDate(QDate());
                        m_store->setDraftDue(QDate());
                    });
+}
+
+void MainWindow::openQuickAdd()
+{
+    if (!m_quickAdd) {
+        // Parentless so showing the input cannot raise a hidden main window.
+        m_quickAdd = new QuickAddPopup(nullptr);
+        connect(m_quickAdd, &QuickAddPopup::accepted, this, &MainWindow::handleQuickAddAccepted);
+    }
+    m_quickAdd->openNear(QCursor::pos());
+}
+
+void MainWindow::handleQuickAddAccepted(const QString &text)
+{
+    if (!m_store)
+        return;
+    const QString id = m_store->addTodo(text, defaultNewTodoDue());
+    if (id.isEmpty()) {
+        const QString fail = QStringLiteral("这条待办未能保存，请检查数据目录。");
+        if (isVisible() && !isMinimized() && !m_collapsed)
+            showToast(fail);
+        else if (m_trayInstalled)
+            WinUtils::showTrayBalloon(this, QStringLiteral("Sticky Todo"), fail);
+        return;
+    }
+    // Stay in the tray. Do not showAndActivate / show().
+    if (isVisible() && !isMinimized() && !m_collapsed)
+        showToast(QStringLiteral("已添加"), QString(), {}, 2500);
+    else if (m_trayInstalled)
+        WinUtils::showTrayBalloon(this, QStringLiteral("Sticky Todo"), QStringLiteral("已添加"));
 }
 
 void MainWindow::submitComposer()
