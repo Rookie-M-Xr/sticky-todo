@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and run headless DataStore tests (no GUI).
+"""Build and run headless DataStore tests, then offscreen snackbar layout tests.
 
 Exit 0 on green, non-zero on compile or assertion failure.
 """
@@ -184,6 +184,37 @@ def main() -> int:
         print("DataStore tests FAILED", file=sys.stderr)
         return result.returncode or 1
     print("DataStore tests OK")
+
+    moc_widgets = BUILD / "moc_widgets.cpp"
+    run([moc, SRC / "widgets.h", "-o", moc_widgets, f"-I{SRC}"])
+    snack_sources = [
+        SRC / "icons.cpp",
+        SRC / "widgets.cpp",
+        moc_widgets,
+        TESTS / "test_snackbar.cpp",
+    ]
+    snack_objects = [BUILD / "models.o", BUILD / "theme.o"]
+    snack_objects.append(BUILD / ("winutils.o" if IS_WINDOWS else "winutils_linux.o"))
+    for source in snack_sources:
+        obj = BUILD / (source.stem + ".o")
+        run([cxx, *cxxflags, "-c", source, "-o", obj])
+        snack_objects.append(obj)
+    snack_exe = BUILD / ("test_snackbar.exe" if IS_WINDOWS else "test_snackbar")
+    run([cxx, *snack_objects, "-o", snack_exe, *ldflags])
+
+    snack_env = env.copy()
+    snack_env["QT_QPA_PLATFORM"] = "offscreen"
+    plugin_path = QT / "plugins"
+    if plugin_path.exists():
+        snack_env["QT_PLUGIN_PATH"] = os.pathsep.join(
+            [str(plugin_path), snack_env.get("QT_PLUGIN_PATH", "")]
+        )
+    print(">>", snack_exe)
+    snack_result = subprocess.run([str(snack_exe)], cwd=ROOT, env=snack_env)
+    if snack_result.returncode != 0:
+        print("Snackbar tests FAILED", file=sys.stderr)
+        return snack_result.returncode or 1
+    print("Snackbar tests OK")
     return 0
 
 
