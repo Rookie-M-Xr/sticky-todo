@@ -3,6 +3,7 @@
 #include "models.h"
 #include "theme.h"
 
+#include <QAction>
 #include <QEnterEvent>
 #include <QFontMetrics>
 #include <QGraphicsOpacityEffect>
@@ -12,6 +13,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QLinearGradient>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -20,6 +22,10 @@
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSignalBlocker>
+#include <QStringList>
+#include <QTextLayout>
+#include <QTextLine>
+#include <QTextOption>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -654,6 +660,8 @@ Snackbar::Snackbar(QWidget *parent)
     m_label->setFont(Theme::uiFont(12));
     m_label->setStyleSheet(QStringLiteral("QLabel { color: #fffdf2; background: transparent; }"));
     m_label->setTextFormat(Qt::PlainText);
+    m_label->setWordWrap(false);
+    m_label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     m_label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     layout->addWidget(m_label, 1);
 
@@ -692,12 +700,17 @@ void Snackbar::showMessage(const QString &message, const QString &actionText,
 
 void Snackbar::showActions(const QString &message,
                            const QVector<QPair<QString, std::function<void()>>> &actions,
-                           int timeoutMs)
+                           int timeoutMs, const QString &overflowMenuText)
 {
     clearExtraActions();
     m_action = nullptr;
-    m_label->setText(message);
-    m_label->setToolTip(message);
+    m_fullMessage = message;
+    m_timeoutMs = timeoutMs;
+    const bool overflow = !overflowMenuText.trimmed().isEmpty() && actions.size() > 1;
+    m_labelLines = overflow ? 2 : 1;
+    applyBarHeight(overflow);
+    m_label->setToolTip(m_fullMessage);
+    setToolTip(m_fullMessage);
     if (actions.size() == 1) {
         m_action = actions.front().second;
         m_actionButton->setText(actions.front().first);
@@ -705,19 +718,32 @@ void Snackbar::showActions(const QString &message,
     } else {
         m_actionButton->hide();
         auto *box = qobject_cast<QHBoxLayout *>(layout());
-        for (const auto &item : actions) {
-            QPushButton *button = makeActionButton(item.first);
-            button->setToolTip(QStringLiteral("%1 分钟").arg(item.first));
-            const std::function<void()> callback = item.second;
-            connect(button, &QPushButton::clicked, this, [this, callback] {
-                m_action = nullptr;
-                dismiss();
-                if (callback)
-                    callback();
-            });
+        if (overflow) {
+            m_overflowActions = actions;
+            QPushButton *button = makeActionButton(overflowMenuText);
+            QStringList tipParts;
+            for (const auto &item : actions)
+                tipParts.append(item.first);
+            button->setToolTip(tipParts.join(QStringLiteral(" / ")));
+            connect(button, &QPushButton::clicked, this, &Snackbar::openOverflowMenu);
             if (box)
                 box->addWidget(button, 0);
             m_extraButtons.append(button);
+        } else {
+            for (const auto &item : actions) {
+                QPushButton *button = makeActionButton(item.first);
+                button->setToolTip(QStringLiteral("%1 分钟").arg(item.first));
+                const std::function<void()> callback = item.second;
+                connect(button, &QPushButton::clicked, this, [this, callback] {
+                    m_action = nullptr;
+                    dismiss();
+                    if (callback)
+                        callback();
+                });
+                if (box)
+                    box->addWidget(button, 0);
+                m_extraButtons.append(button);
+            }
         }
     }
     m_timer->stop();
@@ -753,6 +779,44 @@ void Snackbar::clearExtraActions()
         button->deleteLater();
     }
     m_extraButtons.clear();
+    m_overflowActions.clear();
+}
+
+void Snackbar::applyBarHeight(bool wrapped)
+{
+    setFixedHeight(wrapped ? 56 : 42);
+    if (auto *box = qobject_cast<QHBoxLayout *>(layout()))
+        box->setContentsMargins(14, wrapped ? 6 : 0, 8, wrapped ? 6 : 0);
+}
+
+void Snackbar::openOverflowMenu()
+{
+    if (m_overflowActions.isEmpty() || m_extraButtons.isEmpty())
+        return;
+    QPushButton *anchor = m_extraButtons.front();
+    if (!anchor)
+        return;
+    m_timer->stop();
+    QMenu menu(this);
+    menu.setFont(Theme::uiFont(12));
+    QVector<QAction *> acts;
+    acts.reserve(m_overflowActions.size());
+    for (const auto &item : m_overflowActions)
+        acts.append(menu.addAction(item.first));
+    QAction *chosen = menu.exec(anchor->mapToGlobal(QPoint(0, anchor->height() + 2)));
+    if (!chosen) {
+        if (m_timeoutMs > 0 && isVisible() && !m_hiding)
+            m_timer->start(m_timeoutMs);
+        return;
+    }
+    const int index = static_cast<int>(acts.indexOf(chosen));
+    if (index < 0 || index >= m_overflowActions.size())
+        return;
+    const std::function<void()> callback = m_overflowActions.at(index).second;
+    m_action = nullptr;
+    dismiss();
+    if (callback)
+        callback();
 }
 
 void Snackbar::dismiss()
@@ -800,6 +864,44 @@ void Snackbar::resizeEvent(QResizeEvent *event)
     refreshGeometry();
 }
 
+namespace {
+
+QString elideSnackbarText(const QString &text, int width, const QFont &font, int maxLines)
+{
+    if (text.isEmpty() || width <= 8)
+        return text;
+    QFontMetrics fm(font);
+    if (maxLines <= 1)
+        return fm.elidedText(text, Qt::ElideRight, width);
+
+    QTextLayout layout(text, font);
+    QTextOption option;
+    option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+    layout.setTextOption(option);
+    layout.beginLayout();
+    QStringList lines;
+    for (int i = 0; i < maxLines; ++i) {
+        QTextLine line = layout.createLine();
+        if (!line.isValid())
+            break;
+        line.setLineWidth(width);
+        const int start = line.textStart();
+        if (i == maxLines - 1) {
+            QTextLine extra = layout.createLine();
+            if (extra.isValid())
+                lines.append(fm.elidedText(text.mid(start), Qt::ElideRight, width));
+            else
+                lines.append(text.mid(start, line.textLength()));
+            break;
+        }
+        lines.append(text.mid(start, line.textLength()));
+    }
+    layout.endLayout();
+    return lines.join(QLatin1Char('\n'));
+}
+
+} // namespace
+
 void Snackbar::refreshGeometry()
 {
     if (!m_label)
@@ -811,7 +913,14 @@ void Snackbar::refreshGeometry()
         if (button && button->isVisible())
             actionWidth += button->sizeHint().width() + 8;
     }
-    m_label->setMaximumWidth(qMax(40, width() - 28 - actionWidth));
+    const int avail = qMax(40, width() - 28 - actionWidth);
+    m_label->setMaximumWidth(avail);
+    const QString shown = elideSnackbarText(m_fullMessage.isEmpty() ? m_label->text()
+                                                                    : m_fullMessage,
+                                            avail, m_label->font(), m_labelLines);
+    if (m_label->text() != shown)
+        m_label->setText(shown);
+    m_label->setToolTip(m_fullMessage);
 }
 
 namespace {

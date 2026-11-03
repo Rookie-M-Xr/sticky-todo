@@ -448,6 +448,19 @@ QDateTime reminderSnoozeUntil(const QDateTime &from, int minutes)
     return origin.addSecs(static_cast<qint64>(minutes) * 60);
 }
 
+QString reminderFireLabel(const QString &text)
+{
+    const QString trimmed = text.trimmed();
+    if (trimmed.isEmpty())
+        return QStringLiteral("定时提醒");
+    return trimmed;
+}
+
+QString reminderSnoozeMenuLabel()
+{
+    return QStringLiteral("延后 ▾");
+}
+
 QJsonObject ReminderItem::toJson() const
 {
     QJsonObject object;

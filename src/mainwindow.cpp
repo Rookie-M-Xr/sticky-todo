@@ -126,7 +126,7 @@ void placeSnackbarOnCard(QWidget *card, QWidget *composerBar, QWidget *snackbar)
 {
     if (!card || !snackbar)
         return;
-    const int barHeight = 42;
+    const int barHeight = qMax(42, snackbar->height());
     const int inset = 18;
     int bottom = card->height();
     if (composerBar) {
@@ -2448,8 +2448,8 @@ void MainWindow::showToast(const QString &message, const QString &actionText,
     if (!m_snackbar)
         return;
     stopCollapseCountdown();
-    placeSnackbarOnCard(m_card, m_composerBar, m_snackbar);
     m_snackbar->showMessage(message, actionText, std::move(action), timeoutMs);
+    placeSnackbarOnCard(m_card, m_composerBar, m_snackbar);
     m_snackbar->raise();
 }
 
@@ -2835,17 +2835,15 @@ void MainWindow::onReminderTick()
 
 void MainWindow::notifyReminderDue(const QString &id, const QString &text)
 {
-    const QString label = text.trimmed().isEmpty()
-        ? QStringLiteral("定时提醒")
-        : elidedOneLine(text, 28, Theme::uiFont(12));
-    const QString message = QStringLiteral("提醒：%1").arg(label);
+    // #77: title first — no "提醒：" prefix, no 28px pre-elide. Snackbar
+    // keeps the full string as tooltip and wraps up to two lines.
+    const QString message = reminderFireLabel(text);
     if (m_collapsed)
         expandFromTab(false);
     if (!isVisible() || isMinimized())
         showAndActivate();
     if (m_snackbar) {
         stopCollapseCountdown();
-        placeSnackbarOnCard(m_card, m_composerBar, m_snackbar);
         QVector<QPair<QString, std::function<void()>>> actions;
         const int presets[] = {kReminderSnoozeMinutes5, kReminderSnoozeMinutes10,
                                kReminderSnoozeMinutes15};
@@ -2853,7 +2851,8 @@ void MainWindow::notifyReminderDue(const QString &id, const QString &text)
             actions.append({QStringLiteral("延后 %1").arg(minutes),
                             [this, id, minutes] { snoozeReminder(id, minutes); }});
         }
-        m_snackbar->showActions(message, actions, 9000);
+        m_snackbar->showActions(message, actions, 9000, reminderSnoozeMenuLabel());
+        placeSnackbarOnCard(m_card, m_composerBar, m_snackbar);
         m_snackbar->raise();
     }
     if (m_trayInstalled)
