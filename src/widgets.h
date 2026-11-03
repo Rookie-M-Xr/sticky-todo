@@ -200,7 +200,8 @@ public:
                      std::function<void()> action = {}, int timeoutMs = 6000);
     void showActions(const QString &message,
                      const QVector<QPair<QString, std::function<void()>>> &actions,
-                     int timeoutMs = 6000);
+                     int timeoutMs = 6000,
+                     const QString &overflowMenuText = QString());
     void dismiss();
 
 protected:
@@ -212,15 +213,21 @@ private:
     void refreshGeometry();
     void triggerAction();
     void clearExtraActions();
+    void applyBarHeight(bool wrapped);
+    void openOverflowMenu();
     QPushButton *makeActionButton(const QString &text);
 
     QLabel *m_label = nullptr;
     QPushButton *m_actionButton = nullptr;
     QVector<QPushButton *> m_extraButtons;
+    QVector<QPair<QString, std::function<void()>>> m_overflowActions;
     QTimer *m_timer = nullptr;
     QGraphicsOpacityEffect *m_effect = nullptr;
     QPropertyAnimation *m_animation = nullptr;
     std::function<void()> m_action;
+    QString m_fullMessage;
+    int m_timeoutMs = 0;
+    int m_labelLines = 1;
     bool m_hiding = false;
 };
 

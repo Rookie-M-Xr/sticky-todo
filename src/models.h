@@ -86,6 +86,11 @@ bool reminderIsDue(const ReminderItem &item, const QDateTime &now = QDateTime(),
                    const QDateTime &snoozeUntil = QDateTime());
 bool reminderSnoozeMinutesValid(int minutes);
 QDateTime reminderSnoozeUntil(const QDateTime &from, int minutes);
+// Fire-time banner copy (#77): the reminder text itself — no "提醒：" prefix
+// and no pre-elide. Empty/whitespace → "定时提醒". The snackbar wraps or
+// elides to the live label width and keeps this full string as the tooltip.
+QString reminderFireLabel(const QString &text);
+QString reminderSnoozeMenuLabel();
 
 enum class ReportKind {
     Daily,

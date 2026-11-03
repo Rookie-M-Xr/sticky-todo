@@ -1606,6 +1606,33 @@ void testReminderSnooze()
         pass("reminder in-process snooze (5/10/15, disable, window)");
 }
 
+void testReminderFireLabel()
+{
+    const int before = g_failed;
+    expect(reminderFireLabel(QString()) == QStringLiteral("定时提醒"),
+           "fire-label: empty → fallback");
+    expect(reminderFireLabel(QStringLiteral("   ")) == QStringLiteral("定时提醒"),
+           "fire-label: whitespace → fallback");
+    expect(reminderFireLabel(QStringLiteral("  喝水  ")) == QStringLiteral("喝水"),
+           "fire-label: trim");
+
+    const QString medium = QStringLiteral("去一楼会议室拿文件了");
+    expect(medium.size() >= 10, "fire-label: medium fixture ≥10 chars");
+    expect(reminderFireLabel(medium) == medium, "fire-label: medium kept whole");
+    expect(!reminderFireLabel(medium).contains(QStringLiteral("提醒：")),
+           "fire-label: no 提醒： prefix");
+    expect(!reminderFireLabel(medium).contains(QStringLiteral("…")),
+           "fire-label: no pre-elide ellipsis");
+
+    const QString longText = QStringLiteral("去").repeated(80);
+    expect(reminderFireLabel(longText) == longText, "fire-label: long not pre-elided");
+    expect(reminderSnoozeMenuLabel() == QStringLiteral("延后 ▾"),
+           "fire-label: snooze overflow menu");
+
+    if (g_failed == before)
+        pass("reminder fire-time banner label (#77)");
+}
+
 void testReminderStorePersistAndDisable()
 {
     const int before = g_failed;
@@ -2143,6 +2170,7 @@ int main(int argc, char *argv[])
     testPomodoroStatsClear();
     testReminderHelpers();
     testReminderSnooze();
+    testReminderFireLabel();
     testReminderStorePersistAndDisable();
     testReminderDueThenMarkFired();
     testReminderCorruptionRecovery();
