@@ -206,7 +206,10 @@ public:
     void showActions(const QString &message,
                      const QVector<QPair<QString, std::function<void()>>> &actions,
                      int timeoutMs = 6000,
-                     const QString &overflowMenuText = QString());
+                     const QString &overflowMenuText = QString(),
+                     const QVector<QPair<QString, std::function<void()>>> &leadingActions = {},
+                     const QString &customInputPlaceholder = QString(),
+                     std::function<void(int)> customMinutesHandler = {});
     void dismiss();
 
 protected:
@@ -225,7 +228,10 @@ private:
     QLabel *m_label = nullptr;
     QPushButton *m_actionButton = nullptr;
     QVector<QPushButton *> m_extraButtons;
+    QPushButton *m_overflowButton = nullptr;
     QVector<QPair<QString, std::function<void()>>> m_overflowActions;
+    QString m_customInputPlaceholder;
+    std::function<void(int)> m_customMinutesHandler;
     QTimer *m_timer = nullptr;
     QGraphicsOpacityEffect *m_effect = nullptr;
     QPropertyAnimation *m_animation = nullptr;
