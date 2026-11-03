@@ -159,7 +159,7 @@ const QVector<GroupInfo> &allGroups()
         {GroupId::Next7, QStringLiteral("next7"), QStringLiteral("未来 7 天")},
         {GroupId::Later, QStringLiteral("later"), QStringLiteral("更晚")},
         {GroupId::NoDate, QStringLiteral("nodate"), QStringLiteral("无日期")},
-        {GroupId::PastCompleted, QStringLiteral("pastcompleted"), QStringLiteral("往期完成")},
+        {GroupId::PastCompleted, QStringLiteral("pastcompleted"), QStringLiteral("已完成")},
     };
     return groups;
 }
@@ -198,16 +198,32 @@ QDate defaultNewTodoDue(QDate today)
     return today.isValid() ? today : QDate::currentDate();
 }
 
+bool defaultGroupExpanded(GroupId id)
+{
+    return id != GroupId::PastCompleted;
+}
+
+int groupHeaderCount(const TodoGroup &group)
+{
+    if (group.id == GroupId::PastCompleted)
+        return group.items.size();
+    return group.pendingCount;
+}
+
 GroupId groupFor(const TodoItem &item, QDate today)
 {
+    // #79: every completed item (including completed pins) leaves the
+    // incomplete timeline so that list stays scannable. Data is unchanged.
+    if (item.completed)
+        return GroupId::PastCompleted;
     // Incomplete pins leave their date group so they stay at the top of the
-    // incomplete list. Completed pins stay on the timeline (unpin restores).
-    if (!item.completed && item.isPinned())
+    // incomplete list. Unpin restores the date group.
+    if (item.isPinned())
         return GroupId::Pinned;
     if (!item.dueDate.isValid())
         return GroupId::NoDate;
     if (item.dueDate < today)
-        return item.completed ? GroupId::PastCompleted : GroupId::Overdue;
+        return GroupId::Overdue;
     if (item.dueDate == today)
         return GroupId::Today;
     if (item.dueDate == today.addDays(1))
@@ -247,6 +263,14 @@ QVector<TodoGroup> buildGroups(const QVector<TodoItem> &items, QDate today, cons
             if (groupId == GroupId::Pinned) {
                 if (a.pinnedAt != b.pinnedAt)
                     return a.pinnedAt > b.pinnedAt;
+                return a.id < b.id;
+            }
+            // #79: newest completion first so expanding 已完成 finds what just finished.
+            if (groupId == GroupId::PastCompleted) {
+                if (a.completedAt != b.completedAt)
+                    return a.completedAt > b.completedAt;
+                if (a.updatedAt != b.updatedAt)
+                    return a.updatedAt > b.updatedAt;
                 return a.id < b.id;
             }
             if (a.dueDate.isValid() != b.dueDate.isValid())
