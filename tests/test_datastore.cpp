@@ -726,8 +726,8 @@ void testPinGrouping()
         }
     }
     expect(!sawPinGroup, "pin-group: completed pin is not in pin group");
-    expect(foundDone && doneGroup == GroupId::Later,
-           "pin-group: completed pin stays on timeline");
+    expect(foundDone && doneGroup == GroupId::PastCompleted,
+           "pin-group: completed pin joins 已完成, not the timeline");
 
     later.pinnedAt = QDateTime();
     groups = buildGroups({later, todayItem}, today);
@@ -2236,6 +2236,152 @@ void testQuickAddMatchesComposerGrouping()
         pass("tray quick-add matches composer today/incomplete grouping");
 }
 
+void testCompletedSectionGrouping()
+{
+    const int before = g_failed;
+    const QDate today(2026, 11, 3);
+    const QDateTime t0(today, QTime(8, 0));
+
+    auto makeItem = [&](const QString &id, const QString &text, QDate due, bool completed,
+                        int completedOffset) {
+        TodoItem item;
+        item.id = id;
+        item.text = text;
+        item.dueDate = due;
+        item.createdAt = t0;
+        item.updatedAt = t0.addSecs(completedOffset);
+        item.completed = completed;
+        if (completed)
+            item.completedAt = t0.addSecs(completedOffset);
+        return item;
+    };
+
+    const TodoItem openToday = makeItem(QStringLiteral("open-today"), QStringLiteral("未办今天"),
+                                        today, false, 0);
+    const TodoItem doneToday = makeItem(QStringLiteral("done-today"), QStringLiteral("已办今天"),
+                                        today, true, 10);
+    const TodoItem doneNodate = makeItem(QStringLiteral("done-nodate"), QStringLiteral("已办无日期"),
+                                         QDate(), true, 20);
+    const TodoItem doneLater = makeItem(QStringLiteral("done-later"), QStringLiteral("已办更晚"),
+                                        today.addDays(20), true, 30);
+    const TodoItem donePast = makeItem(QStringLiteral("done-past"), QStringLiteral("已办逾期日"),
+                                       today.addDays(-2), true, 5);
+    const TodoItem openNodate = makeItem(QStringLiteral("open-nodate"), QStringLiteral("未办无日期"),
+                                         QDate(), false, 0);
+
+    expect(groupFor(doneToday, today) == GroupId::PastCompleted, "done-group: today completed");
+    expect(groupFor(doneNodate, today) == GroupId::PastCompleted, "done-group: nodate completed");
+    expect(groupFor(doneLater, today) == GroupId::PastCompleted, "done-group: later completed");
+    expect(groupFor(donePast, today) == GroupId::PastCompleted, "done-group: past-due completed");
+    expect(groupFor(openToday, today) == GroupId::Today, "done-group: today open stays Today");
+    expect(groupFor(openNodate, today) == GroupId::NoDate, "done-group: nodate open stays NoDate");
+    expect(groupTitle(GroupId::PastCompleted) == QStringLiteral("已完成"),
+           "done-group: section title");
+
+    const QVector<TodoItem> source = {openToday, doneToday, doneNodate, doneLater, donePast,
+                                      openNodate};
+    const QVector<TodoGroup> groups = buildGroups(source, today);
+    const TodoGroup *doneGroup = nullptr;
+    const TodoGroup *todayGroup = nullptr;
+    const TodoGroup *nodateGroup = nullptr;
+    for (const TodoGroup &group : groups) {
+        if (group.id == GroupId::PastCompleted)
+            doneGroup = &group;
+        else if (group.id == GroupId::Today)
+            todayGroup = &group;
+        else if (group.id == GroupId::NoDate)
+            nodateGroup = &group;
+        for (const TodoItem &item : group.items)
+            expect(group.id != GroupId::PastCompleted || item.completed,
+                   "done-group: only completed in 已完成");
+        if (group.id != GroupId::PastCompleted) {
+            for (const TodoItem &item : group.items)
+                expect(!item.completed, "done-group: incomplete groups have no completed rows");
+        }
+    }
+    expect(doneGroup != nullptr && doneGroup->items.size() == 4, "done-group: four completed");
+    expect(doneGroup && groupHeaderCount(*doneGroup) == 4, "done-group: header count is 4");
+    expect(doneGroup && doneGroup->pendingCount == 0, "done-group: pending stays 0");
+    expect(todayGroup && todayGroup->items.size() == 1
+               && todayGroup->items.at(0).id == openToday.id,
+           "done-group: Today only has the open item");
+    expect(nodateGroup && nodateGroup->items.size() == 1
+               && nodateGroup->items.at(0).id == openNodate.id,
+           "done-group: NoDate only has the open item");
+    expect(doneGroup && doneGroup->items.at(0).id == doneLater.id,
+           "done-group: newest completed first");
+    expect(doneGroup && doneGroup->items.at(3).id == donePast.id,
+           "done-group: oldest completed last");
+
+    expect(source.size() == 6 && source.at(1).completed && source.at(1).id == doneToday.id,
+           "done-group: buildGroups does not mutate source items");
+
+    if (g_failed == before)
+        pass("completed items fold into 已完成 without mutating data");
+}
+
+void testCompletedSectionDefaultCollapsed()
+{
+    const int before = g_failed;
+    expect(!defaultGroupExpanded(GroupId::PastCompleted), "done-fold: default collapsed");
+    expect(defaultGroupExpanded(GroupId::Today), "done-fold: Today still open");
+    expect(defaultGroupExpanded(GroupId::Pinned), "done-fold: Pinned still open");
+    expect(defaultGroupExpanded(GroupId::NoDate), "done-fold: NoDate still open");
+
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "done-fold: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    QString openId;
+    QString doneId;
+    {
+        DataStore store;
+        expect(store.load(), "done-fold: load");
+        expect(!store.groupExpanded(GroupId::PastCompleted),
+               "done-fold: missing key defaults collapsed");
+        expect(store.groupExpanded(GroupId::Today), "done-fold: Today default expanded");
+        openId = store.addTodo(QStringLiteral("还没做"), QDate::currentDate());
+        doneId = store.addTodo(QStringLiteral("已经做了"), QDate::currentDate());
+        expect(!openId.isEmpty() && !doneId.isEmpty(), "done-fold: seeded ids");
+        expect(store.setCompleted(doneId, true), "done-fold: complete one");
+        expect(store.todos().size() == 2, "done-fold: both rows still live");
+        expect(store.findTodo(doneId) && store.findTodo(doneId)->completed,
+               "done-fold: completed flag only, not deleted");
+        store.setGroupExpanded(GroupId::PastCompleted, true);
+        expect(store.groupExpanded(GroupId::PastCompleted), "done-fold: user expand honored");
+        expect(store.flush(), "done-fold: flush settings + todos");
+    }
+
+    {
+        DataStore reload;
+        expect(reload.load(), "done-fold: reload");
+        expect(reload.groupExpanded(GroupId::PastCompleted),
+               "done-fold: expanded preference persisted");
+        expect(reload.todos().size() == 2, "done-fold: reload still has two todos");
+        const TodoItem *done = reload.findTodo(doneId);
+        const TodoItem *open = reload.findTodo(openId);
+        expect(done && done->completed && done->text == QStringLiteral("已经做了"),
+               "done-fold: completed text intact");
+        expect(open && !open->completed && open->text == QStringLiteral("还没做"),
+               "done-fold: open text intact");
+        reload.setGroupExpanded(GroupId::PastCompleted, false);
+        expect(!reload.groupExpanded(GroupId::PastCompleted), "done-fold: collapse again");
+        expect(reload.flush(), "done-fold: flush collapse");
+    }
+
+    {
+        DataStore again;
+        expect(again.load(), "done-fold: reload after collapse");
+        expect(!again.groupExpanded(GroupId::PastCompleted),
+               "done-fold: collapsed preference persisted");
+        expect(again.todos().size() == 2, "done-fold: still no data delete");
+    }
+
+    if (g_failed == before)
+        pass("已完成 default-collapsed + persist fold, no todo mutation");
+}
+
 void testTooltipChromeContract()
 {
     const int before = g_failed;
@@ -2301,6 +2447,8 @@ int main(int argc, char *argv[])
     testReminderActiveWindowAndInterval();
     testReminderWindowPersistAndLegacyMigrate();
     testQuickAddMatchesComposerGrouping();
+    testCompletedSectionGrouping();
+    testCompletedSectionDefaultCollapsed();
     testTooltipChromeContract();
 
     if (g_failed != 0) {

@@ -770,7 +770,7 @@ GroupSection::GroupSection(const TodoGroup &group, bool expanded, QWidget *paren
     : QWidget(parent)
     , m_id(group.id)
     , m_title(groupTitle(group.id))
-    , m_pendingCount(group.pendingCount)
+    , m_pendingCount(groupHeaderCount(group))
     , m_expanded(expanded)
 {
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -949,7 +949,8 @@ void TodoScrollView::refresh(const QVector<TodoGroup> &groups, const QString &se
     } else {
         m_bottomFade->setVisible(true);
         for (const TodoGroup &group : groups) {
-            const bool expanded = searching || (m_store && m_store->groupExpanded(group.id));
+            const bool expanded = searching
+                || (m_store ? m_store->groupExpanded(group.id) : defaultGroupExpanded(group.id));
             auto *section = new GroupSection(group, expanded, m_content);
             connectSection(section);
             m_layout->addWidget(section);
