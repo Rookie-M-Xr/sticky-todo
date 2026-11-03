@@ -125,6 +125,9 @@ QString groupKey(GroupId id);
 QString groupTitle(GroupId id);
 GroupId groupFor(const TodoItem &item, QDate today);
 int groupOrder(GroupId id);
+// Fresh composer default (today). Tray quick-add uses the same due so the
+// new incomplete item lands in GroupId::Today — not NoDate / Later.
+QDate defaultNewTodoDue(QDate today = QDate());
 
 struct TodoGroup {
     GroupId id = GroupId::Today;

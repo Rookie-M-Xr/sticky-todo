@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and run headless DataStore tests, then offscreen snackbar layout tests.
+"""Build and run headless DataStore tests, then offscreen widget tests.
 
 Exit 0 on green, non-zero on compile or assertion failure.
 """
@@ -43,17 +43,25 @@ def run(cmd: list[str | Path], env: dict[str, str] | None = None) -> None:
     subprocess.run([str(x) for x in cmd], cwd=ROOT, check=True, env=env)
 
 
-def find_moc() -> Path:
+def find_tool(name: str) -> Path:
     if IS_WINDOWS:
-        moc = QTBIN / "moc.exe"
+        tool = QTBIN / f"{name}.exe"
     else:
-        moc = QT / "libexec" / "moc"
-        if not moc.exists():
-            moc = QTBIN / "moc"
-    if not moc.exists():
-        print(f"missing tool: {moc}", file=sys.stderr)
+        tool = QT / "libexec" / name
+        if not tool.exists():
+            tool = QTBIN / name
+    if not tool.exists():
+        print(f"missing tool: {tool}", file=sys.stderr)
         raise SystemExit(2)
-    return moc
+    return tool
+
+
+def find_moc() -> Path:
+    return find_tool("moc")
+
+
+def find_rcc() -> Path:
+    return find_tool("rcc")
 
 
 def cxx_tool() -> Path:
@@ -215,6 +223,85 @@ def main() -> int:
         print("Snackbar tests FAILED", file=sys.stderr)
         return snack_result.returncode or 1
     print("Snackbar tests OK")
+
+    quick_cpp = TESTS / "test_quickadd.cpp"
+    quick_obj = BUILD / "test_quickadd.o"
+    run([cxx, *cxxflags, "-c", quick_cpp, "-o", quick_obj])
+    quick_objects = [
+        BUILD / "models.o",
+        BUILD / "theme.o",
+        BUILD / ("winutils.o" if IS_WINDOWS else "winutils_linux.o"),
+        BUILD / "icons.o",
+        BUILD / "widgets.o",
+        BUILD / "moc_widgets.o",
+        quick_obj,
+    ]
+    quick_exe = BUILD / ("test_quickadd.exe" if IS_WINDOWS else "test_quickadd")
+    run([cxx, *quick_objects, "-o", quick_exe, *ldflags])
+
+    print(">>", quick_exe)
+    quick_result = subprocess.run([str(quick_exe)], cwd=ROOT, env=snack_env)
+    if quick_result.returncode != 0:
+        print("Quick-add tests FAILED", file=sys.stderr)
+        return quick_result.returncode or 1
+    print("Quick-add tests OK")
+
+    rcc = find_rcc()
+    moc_headers = [
+        "datastore.h",
+        "widgets.h",
+        "todoview.h",
+        "calendarpopup.h",
+        "settingspage.h",
+        "dailyreportpage.h",
+        "mainwindow.h",
+    ]
+    window_objects: list[Path] = []
+    for header in moc_headers:
+        moc_cpp = BUILD / f"moc_{Path(header).stem}.cpp"
+        run([moc, SRC / header, "-o", moc_cpp, f"-I{SRC}"])
+        obj = BUILD / f"moc_{Path(header).stem}.o"
+        run([cxx, *cxxflags, "-c", moc_cpp, "-o", obj])
+        window_objects.append(obj)
+
+    qrc_cpp = BUILD / "qrc_resources.cpp"
+    run([rcc, ROOT / "resources" / "resources.qrc", "-o", qrc_cpp])
+    qrc_obj = BUILD / "qrc_resources.o"
+    run([cxx, *cxxflags, "-c", qrc_cpp, "-o", qrc_obj])
+    window_objects.append(qrc_obj)
+
+    window_sources = [
+        "models.cpp",
+        "datastore.cpp",
+        "theme.cpp",
+        "icons.cpp",
+        "widgets.cpp",
+        "todoview.cpp",
+        "calendarpopup.cpp",
+        "settingspage.cpp",
+        "dailyreportpage.cpp",
+        "mainwindow.cpp",
+        "winutils.cpp" if IS_WINDOWS else "winutils_linux.cpp",
+    ]
+    for source in window_sources:
+        src_path = SRC / source
+        obj = BUILD / f"{Path(source).stem}_app.o"
+        run([cxx, *cxxflags, "-c", src_path, "-o", obj])
+        window_objects.append(obj)
+
+    window_cpp = TESTS / "test_quickadd_window.cpp"
+    window_obj = BUILD / "test_quickadd_window.o"
+    run([cxx, *cxxflags, "-c", window_cpp, "-o", window_obj])
+    window_objects.append(window_obj)
+    window_exe = BUILD / ("test_quickadd_window.exe" if IS_WINDOWS else "test_quickadd_window")
+    run([cxx, *window_objects, "-o", window_exe, *ldflags])
+
+    print(">>", window_exe)
+    window_result = subprocess.run([str(window_exe)], cwd=ROOT, env=snack_env)
+    if window_result.returncode != 0:
+        print("Quick-add window tests FAILED", file=sys.stderr)
+        return window_result.returncode or 1
+    print("Quick-add window tests OK")
     return 0
 
 

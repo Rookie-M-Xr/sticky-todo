@@ -193,6 +193,11 @@ int groupOrder(GroupId id)
     return index;
 }
 
+QDate defaultNewTodoDue(QDate today)
+{
+    return today.isValid() ? today : QDate::currentDate();
+}
+
 GroupId groupFor(const TodoItem &item, QDate today)
 {
     // Incomplete pins leave their date group so they stay at the top of the
