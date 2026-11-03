@@ -11,12 +11,14 @@
 #include <QButtonGroup>
 #include <QHideEvent>
 #include <QHBoxLayout>
+#include <QIntValidator>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QLinearGradient>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QWidgetAction>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPalette>
@@ -704,32 +706,73 @@ void Snackbar::showMessage(const QString &message, const QString &actionText,
 
 void Snackbar::showActions(const QString &message,
                            const QVector<QPair<QString, std::function<void()>>> &actions,
-                           int timeoutMs, const QString &overflowMenuText)
+                           int timeoutMs, const QString &overflowMenuText,
+                           const QVector<QPair<QString, std::function<void()>>> &leadingActions,
+                           const QString &customInputPlaceholder,
+                           std::function<void(int)> customMinutesHandler)
 {
     clearExtraActions();
     m_action = nullptr;
     m_fullMessage = message;
     m_timeoutMs = timeoutMs;
+    m_customInputPlaceholder = customInputPlaceholder.trimmed();
+    m_customMinutesHandler = std::move(customMinutesHandler);
     const bool overflow = !overflowMenuText.trimmed().isEmpty() && actions.size() > 1;
     m_labelLines = overflow ? 2 : 1;
     applyBarHeight(overflow);
     m_label->setToolTip(m_fullMessage);
     setToolTip(m_fullMessage);
-    if (actions.size() == 1) {
+
+    auto *box = qobject_cast<QHBoxLayout *>(layout());
+    const auto addLeading = [&](const QPair<QString, std::function<void()>> &item) {
+        QPushButton *button = makeActionButton(item.first);
+        button->setToolTip(item.first == reminderDismissLabel()
+                               ? QStringLiteral("忽略本次提醒，周期规则不变")
+                               : item.first);
+        const std::function<void()> callback = item.second;
+        connect(button, &QPushButton::clicked, this, [this, callback] {
+            m_action = nullptr;
+            dismiss();
+            if (callback)
+                callback();
+        });
+        if (box)
+            box->addWidget(button, 0);
+        m_extraButtons.append(button);
+    };
+    for (const auto &item : leadingActions)
+        addLeading(item);
+
+    if (actions.size() == 1 && leadingActions.isEmpty()) {
         m_action = actions.front().second;
         m_actionButton->setText(actions.front().first);
         m_actionButton->setVisible(true);
     } else {
         m_actionButton->hide();
-        auto *box = qobject_cast<QHBoxLayout *>(layout());
         if (overflow) {
             m_overflowActions = actions;
             QPushButton *button = makeActionButton(overflowMenuText);
             QStringList tipParts;
             for (const auto &item : actions)
                 tipParts.append(item.first);
+            if (!m_customInputPlaceholder.isEmpty() && m_customMinutesHandler)
+                tipParts.append(QStringLiteral("自定义"));
             button->setToolTip(tipParts.join(QStringLiteral(" / ")));
             connect(button, &QPushButton::clicked, this, &Snackbar::openOverflowMenu);
+            if (box)
+                box->addWidget(button, 0);
+            m_extraButtons.append(button);
+            m_overflowButton = button;
+        } else if (actions.size() == 1 && !leadingActions.isEmpty()) {
+            const auto &item = actions.front();
+            QPushButton *button = makeActionButton(item.first);
+            const std::function<void()> callback = item.second;
+            connect(button, &QPushButton::clicked, this, [this, callback] {
+                m_action = nullptr;
+                dismiss();
+                if (callback)
+                    callback();
+            });
             if (box)
                 box->addWidget(button, 0);
             m_extraButtons.append(button);
@@ -784,6 +827,9 @@ void Snackbar::clearExtraActions()
     }
     m_extraButtons.clear();
     m_overflowActions.clear();
+    m_overflowButton = nullptr;
+    m_customInputPlaceholder.clear();
+    m_customMinutesHandler = nullptr;
 }
 
 void Snackbar::applyBarHeight(bool wrapped)
@@ -797,7 +843,7 @@ void Snackbar::openOverflowMenu()
 {
     if (m_overflowActions.isEmpty() || m_extraButtons.isEmpty())
         return;
-    QPushButton *anchor = m_extraButtons.front();
+    QPushButton *anchor = m_overflowButton ? m_overflowButton : m_extraButtons.front();
     if (!anchor)
         return;
     m_timer->stop();
@@ -807,7 +853,55 @@ void Snackbar::openOverflowMenu()
     acts.reserve(m_overflowActions.size());
     for (const auto &item : m_overflowActions)
         acts.append(menu.addAction(item.first));
+
+    int customMinutes = 0;
+    bool customChosen = false;
+    if (!m_customInputPlaceholder.isEmpty() && m_customMinutesHandler) {
+        menu.addSeparator();
+        auto *row = new QWidget(&menu);
+        auto *rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(8, 4, 8, 6);
+        rowLayout->setSpacing(6);
+        auto *edit = new QLineEdit(row);
+        edit->setPlaceholderText(m_customInputPlaceholder);
+        edit->setFixedWidth(72);
+        edit->setValidator(new QIntValidator(kReminderMinMinutes, kReminderMaxMinutes, edit));
+        edit->setToolTip(QStringLiteral("输入 1–%1 的整数分钟").arg(kReminderMaxMinutes));
+        auto *ok = new QPushButton(reminderCustomSnoozeConfirmLabel(), row);
+        ok->setCursor(Qt::PointingHandCursor);
+        ok->setFocusPolicy(Qt::NoFocus);
+        ok->setFont(Theme::uiFont(12, QFont::DemiBold));
+        rowLayout->addWidget(edit, 1);
+        rowLayout->addWidget(ok, 0);
+        auto *widgetAction = new QWidgetAction(&menu);
+        widgetAction->setDefaultWidget(row);
+        menu.addAction(widgetAction);
+
+        const auto submitCustom = [edit, &customMinutes, &customChosen, &menu] {
+            bool parsed = false;
+            const int minutes = parseReminderSnoozeMinutes(edit->text(), &parsed);
+            if (!parsed) {
+                edit->setFocus();
+                edit->selectAll();
+                return;
+            }
+            customMinutes = minutes;
+            customChosen = true;
+            menu.close();
+        };
+        connect(ok, &QPushButton::clicked, &menu, submitCustom);
+        connect(edit, &QLineEdit::returnPressed, &menu, submitCustom);
+        edit->setFocus();
+    }
+
     QAction *chosen = menu.exec(anchor->mapToGlobal(QPoint(0, anchor->height() + 2)));
+    if (customChosen) {
+        m_action = nullptr;
+        dismiss();
+        if (m_customMinutesHandler)
+            m_customMinutesHandler(customMinutes);
+        return;
+    }
     if (!chosen) {
         if (m_timeoutMs > 0 && isVisible() && !m_hiding)
             m_timer->start(m_timeoutMs);

@@ -151,6 +151,7 @@ private:
     void onReminderTick();
     void notifyReminderDue(const QString &id, const QString &text);
     void snoozeReminder(const QString &id, int minutes);
+    void dismissReminderOccurrence(const QString &id);
     void pruneReminderSnoozes();
     void handleGroupExpansion(GroupId id, bool expanded);
     void handleSearchChanged(const QString &text);

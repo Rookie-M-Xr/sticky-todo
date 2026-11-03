@@ -438,9 +438,7 @@ bool reminderIsDue(const ReminderItem &item, const QDateTime &now, const QDateTi
 
 bool reminderSnoozeMinutesValid(int minutes)
 {
-    return minutes == kReminderSnoozeMinutes5
-        || minutes == kReminderSnoozeMinutes10
-        || minutes == kReminderSnoozeMinutes15;
+    return minutes >= kReminderMinMinutes && minutes <= kReminderMaxMinutes;
 }
 
 QDateTime reminderSnoozeUntil(const QDateTime &from, int minutes)
@@ -451,6 +449,35 @@ QDateTime reminderSnoozeUntil(const QDateTime &from, int minutes)
     if (!origin.isValid())
         return {};
     return origin.addSecs(static_cast<qint64>(minutes) * 60);
+}
+
+int parseReminderSnoozeMinutes(const QString &text, bool *ok)
+{
+    QString trimmed = text.trimmed();
+    if (trimmed.endsWith(QStringLiteral("分钟")))
+        trimmed = trimmed.left(trimmed.size() - 2).trimmed();
+    if (trimmed.isEmpty()) {
+        if (ok)
+            *ok = false;
+        return 0;
+    }
+    for (const QChar ch : trimmed) {
+        if (!ch.isDigit()) {
+            if (ok)
+                *ok = false;
+            return 0;
+        }
+    }
+    bool parsed = false;
+    const int value = trimmed.toInt(&parsed);
+    if (!parsed || !reminderSnoozeMinutesValid(value)) {
+        if (ok)
+            *ok = false;
+        return 0;
+    }
+    if (ok)
+        *ok = true;
+    return value;
 }
 
 QString reminderFireLabel(const QString &text)
@@ -464,6 +491,26 @@ QString reminderFireLabel(const QString &text)
 QString reminderSnoozeMenuLabel()
 {
     return QStringLiteral("延后 ▾");
+}
+
+QString reminderDismissLabel()
+{
+    return QStringLiteral("忽略");
+}
+
+QString reminderSnoozePresetLabel(int minutes)
+{
+    return QStringLiteral("延后 %1").arg(minutes);
+}
+
+QString reminderCustomSnoozePlaceholder()
+{
+    return QStringLiteral("分钟");
+}
+
+QString reminderCustomSnoozeConfirmLabel()
+{
+    return QStringLiteral("确定");
 }
 
 QJsonObject ReminderItem::toJson() const
