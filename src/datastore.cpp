@@ -837,7 +837,7 @@ void DataStore::setDraftDue(QDate date)
 bool DataStore::groupExpanded(GroupId id) const
 {
     const auto it = m_settings.groupExpanded.constFind(groupKey(id));
-    return it == m_settings.groupExpanded.constEnd() ? true : it.value();
+    return it == m_settings.groupExpanded.constEnd() ? defaultGroupExpanded(id) : it.value();
 }
 
 void DataStore::setGroupExpanded(GroupId id, bool expanded)

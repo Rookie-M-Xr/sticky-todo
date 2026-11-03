@@ -1,3 +1,4 @@
+#include "datastore.h"
 #include "mainwindow.h"
 #include "theme.h"
 #include "todoview.h"
@@ -156,6 +157,76 @@ void testHiddenWindowTrayAddAndCancel()
         pass("hidden main window tray add / cancel / show list");
 }
 
+GroupSection *findSection(QWidget *root, GroupId id)
+{
+    const auto sections = root->findChildren<GroupSection *>();
+    for (GroupSection *section : sections) {
+        if (section && section->groupId() == id)
+            return section;
+    }
+    return nullptr;
+}
+
+void testCompletedSectionFoldedInWindow()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "fold-ui: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    {
+        DataStore store;
+        expect(store.load(), "fold-ui: seed load");
+        const QString openId = store.addTodo(QStringLiteral("未完成可读"), QDate::currentDate());
+        const QString doneId = store.addTodo(QStringLiteral("堆着的已完成"), QDate::currentDate());
+        expect(!openId.isEmpty() && !doneId.isEmpty(), "fold-ui: seeded");
+        expect(store.setCompleted(doneId, true), "fold-ui: complete");
+        expect(store.flush(), "fold-ui: flush seed");
+        expect(todoCountOnDisk(dataDir) == 2, "fold-ui: both rows on disk before window");
+    }
+
+    MainWindow window;
+    window.show();
+    pump();
+    QTimer::singleShot(0, [] {});
+    pump();
+
+    GroupSection *doneSection = findSection(&window, GroupId::PastCompleted);
+    GroupSection *todaySection = findSection(&window, GroupId::Today);
+    expect(doneSection != nullptr, "fold-ui: 已完成 section exists");
+    expect(todaySection != nullptr, "fold-ui: Today section exists");
+    expect(doneSection && !doneSection->isExpanded(), "fold-ui: 已完成 default collapsed");
+    expect(todaySection && todaySection->isExpanded(), "fold-ui: Today stays expanded");
+    expect(doneSection && doneSection->pendingCount() == 1, "fold-ui: header count is 1");
+
+    bool sawOpen = false;
+    bool sawDoneRow = false;
+    const auto rows = window.findChildren<TodoRow *>();
+    for (TodoRow *row : rows) {
+        if (!row)
+            continue;
+        if (row->item().text == QStringLiteral("未完成可读") && !row->item().completed)
+            sawOpen = true;
+        if (row->item().text == QStringLiteral("堆着的已完成") && row->item().completed)
+            sawDoneRow = true;
+    }
+    expect(sawOpen, "fold-ui: incomplete row still in the list");
+    expect(sawDoneRow, "fold-ui: completed row still mounted (not deleted)");
+    expect(todoCountOnDisk(dataDir) == 2, "fold-ui: disk still has both after show");
+
+    if (doneSection) {
+        doneSection->setExpanded(true, false);
+        pump();
+        expect(doneSection->isExpanded(), "fold-ui: can expand 已完成");
+    }
+
+    expect(todoCountOnDisk(dataDir) == 2, "fold-ui: expand does not mutate todos");
+
+    if (g_failed == before)
+        pass("window: 已完成 default-collapsed, expand, data intact");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -168,6 +239,7 @@ int main(int argc, char *argv[])
     Theme::applyApplicationChrome();
 
     testHiddenWindowTrayAddAndCancel();
+    testCompletedSectionFoldedInWindow();
 
     if (g_failed != 0) {
         std::fprintf(stderr, "%d quick-add window assertion(s) failed\n", g_failed);

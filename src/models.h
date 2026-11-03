@@ -17,6 +17,7 @@ struct TodoItem {
     QDateTime updatedAt;
     // TR #60: valid pinnedAt = pinned. Incomplete pins sit in GroupId::Pinned
     // (top of the incomplete list). Multiple pins: newest pinnedAt first.
+    // Completed pins leave the pin group with other completed items (#79).
     QDateTime pinnedAt;
 
     bool isPinned() const { return pinnedAt.isValid(); }
@@ -136,6 +137,8 @@ QString groupKey(GroupId id);
 QString groupTitle(GroupId id);
 GroupId groupFor(const TodoItem &item, QDate today);
 int groupOrder(GroupId id);
+// #79: 已完成分区默认折起；其它时间分组默认展开。仅 UI，不改待办数据。
+bool defaultGroupExpanded(GroupId id);
 // Fresh composer default (today). Tray quick-add uses the same due so the
 // new incomplete item lands in GroupId::Today — not NoDate / Later.
 QDate defaultNewTodoDue(QDate today = QDate());
@@ -145,6 +148,9 @@ struct TodoGroup {
     QVector<TodoItem> items;
     int pendingCount = 0;
 };
+
+// PastCompleted shows item count (all completed). Other groups show pending.
+int groupHeaderCount(const TodoGroup &group);
 
 QVector<TodoGroup> buildGroups(const QVector<TodoItem> &items, QDate today,
                                const QString &search = QString());
