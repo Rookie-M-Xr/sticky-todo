@@ -219,6 +219,7 @@ private:
     QTimer *m_reminderTick = nullptr;
     // In-process only (TR #51): next-fire override. Not persisted.
     QHash<QString, QDateTime> m_reminderSnoozeUntil;
+    LastCompleteUndo m_lastCompleteUndo;
 
     QDate m_currentDate;
     QString m_searchQuery;
