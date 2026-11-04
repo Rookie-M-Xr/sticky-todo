@@ -47,6 +47,11 @@ public:
 
     bool nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result) override;
 
+    // Cold-start presentation (#97): autostart preference on + tray available
+    // → hide to tray (no auto-show). Otherwise show like today. Does not
+    // change how autostart is registered with the OS.
+    void presentOnStartup();
+
     friend struct MainWindowTestAccess;
 
 protected:
@@ -241,6 +246,10 @@ private:
     bool m_applyingTopMost = false;
     bool m_lastTopMost = true;
     bool m_trayInstalled = false;
+    // Snapshot at load: settings.autoStart && trayAvailable(). Used by
+    // presentOnStartup so a later quiet applyAutoStart (Linux stub / failed
+    // Run key) cannot flip the hide-vs-show decision.
+    bool m_startHiddenToTray = false;
     bool m_restoringDock = false;
     int m_trayAttempts = 0;
 

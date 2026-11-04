@@ -60,6 +60,8 @@ bool g_trayAdded = false;
 bool g_trayUseGuid = true;
 QString g_trayTip;
 QString g_trayError;
+// -1 platform default, 1 force available, 0 force unavailable (tests).
+int g_trayAvailableOverride = -1;
 
 void reinstallCachedTrayIcon();
 
@@ -676,8 +678,15 @@ bool handoffIfLowIntegrity()
 }
 
 
+void setTrayAvailableOverrideForTest(int available)
+{
+    g_trayAvailableOverride = available;
+}
+
 bool trayAvailable()
 {
+    if (g_trayAvailableOverride >= 0)
+        return g_trayAvailableOverride != 0;
     return FindWindowW(L"Shell_TrayWnd", nullptr) != nullptr;
 }
 
@@ -688,6 +697,12 @@ unsigned int trayCallbackMessage()
 
 bool installTrayIcon(QWidget *owner, const QImage &image, const QString &tip)
 {
+    if (g_trayAvailableOverride == 0) {
+        g_trayError = QStringLiteral("tray override: unavailable");
+        return false;
+    }
+    if (g_trayAvailableOverride == 1)
+        return true;
     g_trayError.clear();
     if (!owner)
         return false;

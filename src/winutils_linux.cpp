@@ -27,6 +27,8 @@
 namespace {
 
 std::unique_ptr<QLockFile> g_instanceLock;
+// -1 platform default, 1 force available, 0 force unavailable (tests).
+int g_trayAvailableOverride = -1;
 
 void applyDataDirFromArgs(const QStringList &args)
 {
@@ -256,8 +258,15 @@ void suppressSystemFrame(QWidget *window)
     Q_UNUSED(window);
 }
 
+void setTrayAvailableOverrideForTest(int available)
+{
+    g_trayAvailableOverride = available;
+}
+
 bool trayAvailable()
 {
+    if (g_trayAvailableOverride >= 0)
+        return g_trayAvailableOverride != 0;
     return false;
 }
 
@@ -271,6 +280,8 @@ bool installTrayIcon(QWidget *owner, const QImage &image, const QString &tip)
     Q_UNUSED(owner);
     Q_UNUSED(image);
     Q_UNUSED(tip);
+    if (g_trayAvailableOverride == 1)
+        return true;
     return false;
 }
 

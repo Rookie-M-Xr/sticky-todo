@@ -475,6 +475,9 @@ MainWindow::MainWindow(QWidget *parent)
     qApp->installNativeEventFilter(this);
     m_startupNoticesPending = true;
     updateSideNav();
+    // #97: snapshot loaded autostart preference + tray now. Last hide
+    // state is not persisted; do not key off the OS Run command.
+    m_startHiddenToTray = m_store->settings().autoStart && WinUtils::trayAvailable();
 
     if (!loaded) {
         showToast(QStringLiteral("数据目录不可用，修改可能无法保存。"), QString(), {}, 9000);
@@ -725,7 +728,9 @@ void MainWindow::buildTray()
     m_trayStatusAction->setEnabled(false);
     m_trayMenu->addSeparator();
     m_trayShowAction = m_trayMenu->addAction(QStringLiteral("显示便签"));
+    m_trayShowAction->setObjectName(QStringLiteral("trayShow"));
     m_trayHideAction = m_trayMenu->addAction(QStringLiteral("隐藏便签"));
+    m_trayHideAction->setObjectName(QStringLiteral("trayHide"));
     m_trayMenu->addSeparator();
     m_trayQuickAddAction = m_trayMenu->addAction(QStringLiteral("快速添加"));
     m_trayQuickAddAction->setObjectName(QStringLiteral("trayQuickAdd"));
@@ -2307,6 +2312,25 @@ void MainWindow::resetWindowPosition()
     saveWindowState();
     if (m_settingsPage)
         m_settingsPage->refresh();
+}
+
+void MainWindow::presentOnStartup()
+{
+    // Do not reuse hideToTray(): that path save+quits when icon install
+    // fails (X / #14). Autostart must stay operable — fall back to show.
+    // Skip the first-hide balloon: login should stay quiet.
+    if (m_startHiddenToTray) {
+        if (!m_trayInstalled)
+            m_trayInstalled = WinUtils::installTrayIcon(this, trayImage(), trayTipText());
+        if (m_trayInstalled) {
+            WinUtils::promoteTrayIcon();
+            hide();
+            updateTrayState();
+            return;
+        }
+    }
+    show();
+    WinUtils::activateWindow(this);
 }
 
 void MainWindow::showAndActivate()

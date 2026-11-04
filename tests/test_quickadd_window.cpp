@@ -4,6 +4,7 @@
 #include "theme.h"
 #include "todoview.h"
 #include "widgets.h"
+#include "winutils.h"
 
 #include <QAction>
 #include <QApplication>
@@ -34,6 +35,12 @@ struct MainWindowTestAccess {
         window.onPomodoroTick();
         return window.m_pomodoroId.isEmpty();
     }
+
+    static void toggleByHotkey(MainWindow &window) { window.toggleByHotkey(); }
+
+    static bool trayInstalled(const MainWindow &window) { return window.m_trayInstalled; }
+
+    static bool startHiddenFlag(const MainWindow &window) { return window.m_startHiddenToTray; }
 };
 
 namespace {
@@ -164,6 +171,24 @@ void pump()
     QApplication::processEvents();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     QApplication::processEvents();
+}
+
+struct TrayOverride {
+    explicit TrayOverride(int available) { WinUtils::setTrayAvailableOverrideForTest(available); }
+    ~TrayOverride() { WinUtils::setTrayAvailableOverrideForTest(-1); }
+};
+
+bool writeAutoStartSetting(const QString &dataDir, bool autoStart)
+{
+    QJsonObject root;
+    root.insert(QStringLiteral("schemaVersion"), 1);
+    root.insert(QStringLiteral("autoStart"), autoStart);
+    root.insert(QStringLiteral("trayHideHintShown"), true);
+    QFile file(QDir(dataDir).filePath(QStringLiteral("settings.json")));
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return false;
+    file.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    return true;
 }
 
 void testHiddenWindowTrayAddAndCancel()
@@ -775,17 +800,113 @@ void testCompleteUndoToastLatestOnlyAndTimeout()
         pass("window: only latest complete toggle is undoable; timeout drops undo (#92)");
 }
 
+void testAutostartWithTrayStartsHidden()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "start-hide: data dir");
+    if (dataDir.isEmpty())
+        return;
+    expect(writeAutoStartSetting(dataDir, true), "start-hide: seed autostart on");
+
+    TrayOverride tray(1);
+    MainWindow window;
+    expect(MainWindowTestAccess::startHiddenFlag(window),
+           "start-hide: ctor snapshots autostart+tray");
+    expect(!window.isVisible(), "start-hide: ctor does not auto-show");
+    window.presentOnStartup();
+    expect(!window.isVisible(), "start-hide: presentOnStartup stays hidden");
+    expect(MainWindowTestAccess::trayInstalled(window),
+           "start-hide: tray icon installed while hidden");
+
+    pump();
+    expect(!window.isVisible(), "start-hide: timers do not raise the window");
+
+    auto *showAction = window.findChild<QAction *>(QStringLiteral("trayShow"));
+    expect(showAction != nullptr, "start-hide: tray 显示 action");
+    if (showAction)
+        showAction->trigger();
+    pump();
+    expect(window.isVisible(), "start-hide: tray 显示 raises the window");
+
+    auto *hideAction = window.findChild<QAction *>(QStringLiteral("trayHide"));
+    expect(hideAction != nullptr, "start-hide: tray 隐藏 action");
+    if (hideAction)
+        hideAction->trigger();
+    pump();
+    expect(!window.isVisible(), "start-hide: tray 隐藏 returns to tray");
+
+    MainWindowTestAccess::toggleByHotkey(window);
+    pump();
+    expect(window.isVisible(), "start-hide: hotkey show still works");
+
+    if (g_failed == before)
+        pass("autostart on + tray: cold start hidden; tray/hotkey show (#97)");
+}
+
+void testAutostartWithoutTrayStaysVisible()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "start-show: data dir");
+    if (dataDir.isEmpty())
+        return;
+    expect(writeAutoStartSetting(dataDir, true), "start-show: seed autostart on");
+
+    TrayOverride tray(0);
+    MainWindow window;
+    expect(!MainWindowTestAccess::startHiddenFlag(window),
+           "start-show: no-tray does not snapshot hidden start");
+    window.presentOnStartup();
+    expect(window.isVisible(), "start-show: no tray stays visible (must be operable)");
+    expect(!MainWindowTestAccess::trayInstalled(window),
+           "start-show: no fake tray icon");
+
+    pump();
+    expect(window.isVisible(), "start-show: stays visible after timers");
+
+    if (g_failed == before)
+        pass("autostart on + no tray: cold start visible (#97)");
+}
+
+void testTrayWithoutAutostartStaysVisible()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "start-off: data dir");
+    if (dataDir.isEmpty())
+        return;
+    expect(writeAutoStartSetting(dataDir, false), "start-off: seed autostart off");
+
+    TrayOverride tray(1);
+    MainWindow window;
+    expect(!MainWindowTestAccess::startHiddenFlag(window),
+           "start-off: autostart-off does not snapshot hidden start");
+    window.presentOnStartup();
+    expect(window.isVisible(), "start-off: tray + autostart-off still shows");
+
+    pump();
+    expect(window.isVisible(), "start-off: stays visible after timers");
+
+    if (g_failed == before)
+        pass("autostart off + tray: cold start visible (#97)");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
 {
     qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
+    WinUtils::setTrayAvailableOverrideForTest(-1);
     QApplication app(argc, argv);
     QApplication::setQuitOnLastWindowClosed(false);
     app.setApplicationName(QStringLiteral("Sticky Todo"));
     app.setStyle(QStringLiteral("Fusion"));
     Theme::applyApplicationChrome();
 
+    testAutostartWithTrayStartsHidden();
+    testAutostartWithoutTrayStaysVisible();
+    testTrayWithoutAutostartStaysVisible();
     testHiddenWindowTrayAddAndCancel();
     testCompletedSectionFoldedInWindow();
     testHiddenWindowReminderDoesNotRaise();
