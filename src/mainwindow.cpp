@@ -2926,11 +2926,21 @@ void MainWindow::notifyPomodoroFinished(const QString &text, int minutes)
     const QString message = QStringLiteral("「%1」的 %2 分钟到了")
                                 .arg(label)
                                 .arg(clampPomodoroMinutes(minutes));
-    if (m_collapsed)
-        expandFromTab(false);
-    if (!isVisible() || isMinimized())
-        showAndActivate();
-    showToast(message, QString(), {}, 7000);
+    if (isHiddenLikeTray()) {
+        // #96 / same rule as #94: stay in the tray. Do not expandFromTab /
+        // showAndActivate / show() the in-card snackbar (child show() would
+        // show the parent).
+        ensureHiddenReminderBar();
+        if (m_hiddenReminderBar)
+            m_hiddenReminderBar->showMessage(message, QString(), {}, 7000);
+        placeStandaloneReminderBar(m_hiddenReminderBar, geometry());
+        if (m_hiddenReminderBar)
+            m_hiddenReminderBar->raise();
+    } else {
+        if (m_collapsed)
+            expandFromTab(false);
+        showToast(message, QString(), {}, 7000);
+    }
     if (m_trayInstalled)
         WinUtils::showTrayBalloon(this, QStringLiteral("Sticky Todo"), message);
 }
