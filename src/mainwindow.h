@@ -47,6 +47,8 @@ public:
 
     bool nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result) override;
 
+    friend struct MainWindowTestAccess;
+
 protected:
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
