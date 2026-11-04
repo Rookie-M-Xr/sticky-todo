@@ -22,6 +22,18 @@
 
 #include <cstdio>
 
+struct MainWindowTestAccess {
+    static bool startAndFireDuePomodoro(MainWindow &window, const QString &id)
+    {
+        window.startPomodoro(id);
+        if (window.m_pomodoroId != id)
+            return false;
+        window.m_pomodoroDeadline = QDateTime::currentDateTime().addSecs(-1);
+        window.onPomodoroTick();
+        return window.m_pomodoroId.isEmpty();
+    }
+};
+
 namespace {
 
 int g_failed = 0;
@@ -344,6 +356,123 @@ void testHiddenWindowReminderDoesNotRaise()
         pass("hidden window reminder fire does not raise (#94)");
 }
 
+bool seedOpenTodo(const QString &dataDir, const QString &text, int pomodoroMinutes)
+{
+    DataStore store;
+    if (!store.load())
+        return false;
+    store.setPomodoroMinutes(pomodoroMinutes);
+    const QString id = store.addTodo(text, QDate::currentDate());
+    return !id.isEmpty() && store.flush();
+}
+
+TodoRow *findRowByText(QWidget *root, const QString &text)
+{
+    const auto rows = root->findChildren<TodoRow *>();
+    for (TodoRow *row : rows) {
+        if (row && row->item().text == text && !row->item().completed)
+            return row;
+    }
+    return nullptr;
+}
+
+void testHiddenWindowPomodoroDoesNotRaise()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "pomo-hide: data dir");
+    if (dataDir.isEmpty())
+        return;
+    const QString title = QStringLiteral("藏窗番茄");
+    expect(seedOpenTodo(dataDir, title, 1), "pomo-hide: seed open todo");
+
+    MainWindow window;
+    window.show();
+    pump();
+    TodoRow *row = findRowByText(&window, title);
+    expect(row != nullptr, "pomo-hide: row mounted");
+    const QString id = row ? row->item().id : QString();
+    window.hide();
+    expect(!window.isVisible(), "pomo-hide: hidden like tray before fire");
+    pump();
+
+    expect(!id.isEmpty() && MainWindowTestAccess::startAndFireDuePomodoro(window, id),
+           "pomo-hide: due tick ran");
+    pump();
+    QTimer::singleShot(0, [] {});
+    pump();
+
+    expect(!window.isVisible(), "pomo-hide: fire does not show main window");
+
+    Snackbar *onCard = window.findChild<Snackbar *>();
+    expect(onCard != nullptr, "pomo-hide: in-card snackbar exists");
+    expect(!(onCard && onCard->isVisible()),
+           "pomo-hide: in-card snackbar stays off (would show parent)");
+
+    Snackbar *standalone = findStandaloneSnackbar();
+    expect(standalone != nullptr && standalone->isVisible(),
+           "pomo-hide: standalone pomodoro bar appears");
+    expect(standalone && standalone != onCard, "pomo-hide: bar is not the card child");
+    if (standalone) {
+        auto *label = standalone->findChild<QLabel *>();
+        expect(label && label->toolTip().contains(QStringLiteral("1 分钟到了")),
+               "pomo-hide: bar is the pomodoro-due cue");
+        standalone->dismiss();
+    }
+    pump();
+    expect(!window.isVisible(), "pomo-hide: dismiss leaves main window hidden");
+
+    window.show();
+    pump();
+    expect(window.isVisible(), "pomo-hide: 显示 still opens the window");
+    expect(!(findStandaloneSnackbar() && findStandaloneSnackbar()->isVisible()),
+           "pomo-hide: standalone bar dismissed on show");
+
+    if (g_failed == before)
+        pass("hidden window pomodoro fire does not raise (#96)");
+}
+
+void testVisibleWindowPomodoroStillShowsToast()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "pomo-show: data dir");
+    if (dataDir.isEmpty())
+        return;
+    const QString title = QStringLiteral("开窗番茄");
+    expect(seedOpenTodo(dataDir, title, 1), "pomo-show: seed open todo");
+
+    MainWindow window;
+    window.show();
+    pump();
+    QTimer::singleShot(0, [] {});
+    pump();
+
+    TodoRow *row = findRowByText(&window, title);
+    expect(row != nullptr, "pomo-show: row mounted");
+    const QString id = row ? row->item().id : QString();
+    expect(!id.isEmpty() && MainWindowTestAccess::startAndFireDuePomodoro(window, id),
+           "pomo-show: due tick ran");
+    pump();
+
+    expect(window.isVisible(), "pomo-show: visible window stays visible");
+    Snackbar *onCard = window.findChild<Snackbar *>();
+    expect(onCard && onCard->isVisible(), "pomo-show: in-card toast still shows");
+    if (onCard) {
+        auto *label = onCard->findChild<QLabel *>();
+        expect(label && label->toolTip().contains(QStringLiteral("1 分钟到了")),
+               "pomo-show: in-card copy kept");
+        onCard->dismiss();
+    }
+    pump();
+    expect(window.isVisible(), "pomo-show: dismiss does not hide the window");
+    expect(!(findStandaloneSnackbar() && findStandaloneSnackbar()->isVisible()),
+           "pomo-show: no parentless bar while visible");
+
+    if (g_failed == before)
+        pass("visible window pomodoro toast unchanged (#96)");
+}
+
 void testVisibleWindowReminderStillShowsBanner()
 {
     const int before = g_failed;
@@ -391,6 +520,8 @@ int main(int argc, char *argv[])
     testCompletedSectionFoldedInWindow();
     testHiddenWindowReminderDoesNotRaise();
     testVisibleWindowReminderStillShowsBanner();
+    testHiddenWindowPomodoroDoesNotRaise();
+    testVisibleWindowPomodoroStillShowsToast();
 
     if (g_failed != 0) {
         std::fprintf(stderr, "%d quick-add window assertion(s) failed\n", g_failed);
