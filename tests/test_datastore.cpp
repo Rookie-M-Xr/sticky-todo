@@ -92,6 +92,36 @@ void testRoundTrip()
         pass("JSON round-trip");
 }
 
+bool writeRawFile(const QString &path, const QByteArray &bytes)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return false;
+    return file.write(bytes) == bytes.size();
+}
+
+QByteArray readRawFile(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    return file.readAll();
+}
+
+bool writeTodosList(const QString &path, const QString &id, const QString &text)
+{
+    QJsonObject item;
+    item.insert(QStringLiteral("id"), id);
+    item.insert(QStringLiteral("text"), text);
+    item.insert(QStringLiteral("createdAt"),
+                QDateTime::currentDateTime().toString(Qt::ISODateWithMs));
+    item.insert(QStringLiteral("updatedAt"), item.value(QStringLiteral("createdAt")));
+    QJsonObject root;
+    root.insert(QStringLiteral("schemaVersion"), 1);
+    root.insert(QStringLiteral("todos"), QJsonArray{item});
+    return writeRawFile(path, QJsonDocument(root).toJson(QJsonDocument::Indented));
+}
+
 void testCorruptionRecovery()
 {
     const int before = g_failed;
@@ -102,40 +132,99 @@ void testCorruptionRecovery()
 
     const QString todosPath = QDir(dataDir).filePath(QStringLiteral("todos.json"));
     const QString bakPath = todosPath + QStringLiteral(".bak");
-    QString keepId;
-
-    {
-        DataStore store;
-        expect(store.load(), "corrupt: first load");
-        keepId = store.addTodo(QStringLiteral("keep-me"), QDate::currentDate().addDays(1));
-        expect(!keepId.isEmpty(), "corrupt: seed todo");
-        expect(store.flush(), "corrupt: first flush");
-        expect(store.updateText(keepId, QStringLiteral("keep-me-v2")), "corrupt: update");
-        expect(store.flush(), "corrupt: second flush");
-        expect(QFile::exists(bakPath), "corrupt: .bak exists after second save");
-    }
-
-    {
-        QFile file(todosPath);
-        expect(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "corrupt: open todos.json");
-        file.write("{ this is not valid json !!!");
-        file.close();
-    }
+    const QString keepId = QStringLiteral("keep-id-107");
+    const QString bakText = QStringLiteral("keep-me-from-bak");
+    const QByteArray corrupt = QByteArrayLiteral("{ this is not valid json !!!");
+    expect(writeTodosList(bakPath, keepId, bakText), "corrupt: seed readable bak");
+    expect(writeRawFile(todosPath, corrupt), "corrupt: write broken primary");
 
     {
         DataStore store;
         expect(store.load(), "corrupt: load after corruption");
+        expect(store.todos().isEmpty(), "corrupt: no silent restore");
+        expect(store.todosLoadFailed(), "corrupt: load marked failed");
+        expect(store.todoBackupAvailable(), "corrupt: readable bak offered");
+        expect(readRawFile(todosPath) == corrupt, "corrupt: primary not overwritten on load");
+        expect(store.addTodo(QStringLiteral("should-not-write"), QDate()).isEmpty(),
+               "corrupt: add blocked while failed");
+        expect(readRawFile(todosPath) == corrupt, "corrupt: add did not wipe primary");
+        expect(!store.takeNotices().isEmpty(), "corrupt: failure notice");
+
+        expect(store.restoreTodosFromBackup(), "corrupt: confirm restore");
+        expect(!store.todosLoadFailed(), "corrupt: failed flag cleared");
+        expect(!store.todoBackupAvailable(), "corrupt: offer consumed");
         expect(store.todos().size() == 1, "corrupt: recovered one todo");
         const TodoItem *item = store.findTodo(keepId);
-        expect(item != nullptr && item->text == QStringLiteral("keep-me"),
-               "corrupt: todo restored from .bak");
-        const QStringList notices = store.takeNotices();
-        expect(!notices.isEmpty(), "corrupt: notices emitted");
+        expect(item != nullptr && item->text == bakText, "corrupt: list matches bak");
         expect(store.flush(), "corrupt: flush after recovery");
     }
 
+    {
+        DataStore store;
+        expect(store.load(), "corrupt: reload after restore");
+        expect(!store.todosLoadFailed(), "corrupt: reload healthy");
+        expect(store.todos().size() == 1, "corrupt: restored list persisted");
+        const TodoItem *item = store.findTodo(keepId);
+        expect(item != nullptr && item->text == bakText, "corrupt: persisted text matches bak");
+    }
+
     if (g_failed == before)
-        pass("corruption recovery from .bak");
+        pass("corrupt primary + good bak: opt-in restore matches bak");
+}
+
+void testCorruptPrimaryWithoutBackup()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "no-bak: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    const QString todosPath = QDir(dataDir).filePath(QStringLiteral("todos.json"));
+    const QByteArray corrupt = QByteArrayLiteral("not-json-at-all");
+    expect(writeRawFile(todosPath, corrupt), "no-bak: write broken primary");
+
+    DataStore store;
+    expect(store.load(), "no-bak: load");
+    expect(store.todos().isEmpty(), "no-bak: empty in memory");
+    expect(store.todosLoadFailed(), "no-bak: explicit failure");
+    expect(!store.todoBackupAvailable(), "no-bak: no restore offer");
+    expect(readRawFile(todosPath) == corrupt, "no-bak: primary kept");
+    expect(store.addTodo(QStringLiteral("ghost"), QDate()).isEmpty(), "no-bak: write blocked");
+    expect(store.flush(), "no-bak: flush without wiping");
+    expect(readRawFile(todosPath) == corrupt, "no-bak: flush did not write empty success");
+    expect(!store.takeNotices().isEmpty(), "no-bak: failure notice");
+
+    if (g_failed == before)
+        pass("corrupt primary + no bak: explicit failure, no silent empty write");
+}
+
+void testCorruptPrimaryBadBackup()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "bad-bak: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    const QString todosPath = QDir(dataDir).filePath(QStringLiteral("todos.json"));
+    const QString bakPath = todosPath + QStringLiteral(".bak");
+    const QByteArray corrupt = QByteArrayLiteral("{ broken primary");
+    expect(writeRawFile(todosPath, corrupt), "bad-bak: write broken primary");
+    expect(writeRawFile(bakPath, QByteArrayLiteral("{ broken bak too")), "bad-bak: write broken bak");
+
+    DataStore store;
+    expect(store.load(), "bad-bak: load");
+    expect(store.todos().isEmpty(), "bad-bak: empty in memory");
+    expect(store.todosLoadFailed(), "bad-bak: explicit failure");
+    expect(!store.todoBackupAvailable(), "bad-bak: unreadable bak is not offered");
+    expect(!store.restoreTodosFromBackup(), "bad-bak: restore refused");
+    expect(readRawFile(todosPath) == corrupt, "bad-bak: primary kept");
+    expect(store.flush(), "bad-bak: flush");
+    expect(readRawFile(todosPath) == corrupt, "bad-bak: no silent empty write");
+
+    if (g_failed == before)
+        pass("corrupt primary + bad bak: explicit failure, no silent empty write");
 }
 
 
@@ -2622,6 +2711,8 @@ int main(int argc, char *argv[])
 
     testRoundTrip();
     testCorruptionRecovery();
+    testCorruptPrimaryWithoutBackup();
+    testCorruptPrimaryBadBackup();
     testImmediatePersistAndIsolation();
     testRetentionPurge();
     testDailySnapshots();

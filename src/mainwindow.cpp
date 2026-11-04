@@ -288,6 +288,75 @@ protected:
     }
 };
 
+class TodoLoadFailureBanner : public QWidget
+{
+public:
+    std::function<void()> onOpenDataDir;
+
+    explicit TodoLoadFailureBanner(QWidget *parent = nullptr)
+        : QWidget(parent)
+    {
+        setObjectName(QStringLiteral("todoLoadFailureBanner"));
+        setAttribute(Qt::WA_NoSystemBackground);
+        setAttribute(Qt::WA_TranslucentBackground, false);
+        setAttribute(Qt::WA_NativeWindow, false);
+        setAutoFillBackground(false);
+        setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
+
+        auto *layout = new QHBoxLayout(this);
+        layout->setContentsMargins(10, 7, 10, 7);
+        layout->setSpacing(8);
+        auto *label = new QLabel(this);
+        label->setWordWrap(true);
+        label->setTextFormat(Qt::PlainText);
+        label->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        label->setFont(Theme::uiFont(10));
+        label->setStyleSheet(QStringLiteral("color: %1; background: transparent;")
+                                 .arg(Theme::Danger.name()));
+        label->setText(QStringLiteral("待办数据损坏，未覆盖原文件。当前为只读。"));
+        auto *openBtn = new QPushButton(QStringLiteral("打开数据目录"), this);
+        openBtn->setObjectName(QStringLiteral("todoLoadOpenDataDir"));
+        openBtn->setCursor(Qt::PointingHandCursor);
+        openBtn->setFlat(true);
+        openBtn->setFont(Theme::uiFont(10, QFont::DemiBold));
+        openBtn->setStyleSheet(QStringLiteral(
+            "QPushButton { color: %1; background: transparent; border: none; padding: 0; }"
+            "QPushButton:hover { color: %2; }")
+                                   .arg(Theme::AccentDark.name(), Theme::Accent.name()));
+        layout->addWidget(label, 1);
+        layout->addWidget(openBtn, 0, Qt::AlignRight | Qt::AlignVCenter);
+        connect(openBtn, &QPushButton::clicked, this, [this] {
+            if (onOpenDataDir)
+                onOpenDataDir();
+        });
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(QPen(QColor(188, 103, 79, 90), 1.0));
+        painter.setBrush(Theme::DangerSoft);
+        painter.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 8, 8);
+    }
+};
+
+int todoRestoreReplyForTest()
+{
+    const QString hook = QString::fromLocal8Bit(qgetenv("STICKY_TODO_RESTORE_REPLY"))
+                             .trimmed()
+                             .toLower();
+    if (hook == QLatin1String("yes") || hook == QLatin1String("1"))
+        return 1;
+    if (hook == QLatin1String("no") || hook == QLatin1String("0"))
+        return 0;
+    const QString platform = QString::fromLatin1(qgetenv("QT_QPA_PLATFORM")).trimmed().toLower();
+    if (platform == QLatin1String("offscreen") || platform == QLatin1String("minimal"))
+        return 0;
+    return -1;
+}
+
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent)
@@ -421,9 +490,8 @@ MainWindow::MainWindow(QWidget *parent)
             &MainWindow::handleCollapseAction);
     connect(m_settingsPage, &SettingsPage::resetWindowRequested, this,
             &MainWindow::resetWindowPosition);
-    connect(m_settingsPage, &SettingsPage::openDataFolderRequested, this, [this] {
-        QDesktopServices::openUrl(QUrl::fromLocalFile(m_store->dataDir()));
-    });
+    connect(m_settingsPage, &SettingsPage::openDataFolderRequested, this,
+            [this] { openDataDirectory(); });
     connect(m_settingsPage, &SettingsPage::messageRequested, this, [this](const QString &text) {
         showToast(text);
     });
@@ -482,6 +550,8 @@ MainWindow::MainWindow(QWidget *parent)
     if (!loaded) {
         showToast(QStringLiteral("数据目录不可用，修改可能无法保存。"), QString(), {}, 9000);
     }
+    maybeOfferTodoRestore();
+    applyTodoLoadFailureUi();
     QTimer::singleShot(0, this, [this] {
         const AppSettings &settings = m_store->settings();
         applyAutoStart(settings.autoStart, true);
@@ -601,6 +671,11 @@ void MainWindow::buildUi()
     headerLayout->addWidget(m_integrityBanner);
     if (m_integrityBanner->isVisible())
         headerLayout->addSpacing(8);
+    auto *todoLoadBanner = new TodoLoadFailureBanner(m_header);
+    todoLoadBanner->onOpenDataDir = [this] { openDataDirectory(); };
+    todoLoadBanner->setVisible(false);
+    m_todoLoadBanner = todoLoadBanner;
+    headerLayout->addWidget(m_todoLoadBanner);
     cardLayout->addWidget(m_header);
 
     auto *bodyRow = new QWidget(m_card);
@@ -1142,7 +1217,13 @@ void MainWindow::showEvent(QShowEvent *event)
         const QStringList notices = m_store->takeNotices();
         if (!notices.isEmpty()) {
             QTimer::singleShot(450, this, [this, notices] {
-                showToast(notices.join(QStringLiteral("；")), QString(), {}, 9000);
+                const QString text = notices.join(QStringLiteral("；"));
+                if (m_store && m_store->todosLoadFailed()) {
+                    showToast(text, QStringLiteral("打开数据目录"),
+                              [this] { openDataDirectory(); }, 12000);
+                } else {
+                    showToast(text, QString(), {}, 9000);
+                }
             });
         }
     }
@@ -1605,6 +1686,8 @@ void MainWindow::updateTrayState()
         m_trayShowAction->setEnabled(!isVisible() || isMinimized());
     if (m_trayHideAction)
         m_trayHideAction->setEnabled(isVisible() && !isMinimized() && WinUtils::trayAvailable());
+    if (m_trayQuickAddAction)
+        m_trayQuickAddAction->setEnabled(!m_store || !m_store->todosLoadFailed());
     if (m_hideButton) {
         if (m_trayInstalled) {
             m_hideButton->setToolTip(QStringLiteral("隐藏到托盘（程序继续运行）"));
@@ -2562,6 +2645,62 @@ void MainWindow::quitApplication()
         return;
     }
     finishQuit();
+}
+
+void MainWindow::openDataDirectory()
+{
+    if (!m_store)
+        return;
+    QDesktopServices::openUrl(QUrl::fromLocalFile(m_store->dataDir()));
+}
+
+void MainWindow::maybeOfferTodoRestore()
+{
+    if (!m_store || !m_store->todoBackupAvailable())
+        return;
+
+    bool accepted = false;
+    const int hook = todoRestoreReplyForTest();
+    if (hook == 1) {
+        accepted = true;
+    } else if (hook == 0) {
+        accepted = false;
+    } else {
+        QMessageBox box(this);
+        box.setWindowTitle(QStringLiteral("Sticky Todo"));
+        box.setIcon(QMessageBox::Warning);
+        box.setText(QStringLiteral("数据似乎损坏，是否用备份恢复？"));
+        box.setInformativeText(
+            QStringLiteral("将用 %1 覆盖主待办文件并重新加载。取消则保持只读，不覆盖原文件。")
+                .arg(QDir::toNativeSeparators(m_store->todoBackupPath())));
+        QPushButton *restoreBtn = box.addButton(QStringLiteral("恢复"), QMessageBox::AcceptRole);
+        box.addButton(QStringLiteral("取消"), QMessageBox::RejectRole);
+        box.setDefaultButton(restoreBtn);
+        box.exec();
+        accepted = (box.clickedButton() == restoreBtn);
+    }
+
+    if (!accepted)
+        return;
+    if (!m_store->restoreTodosFromBackup()) {
+        showToast(QStringLiteral("备份恢复失败，原文件未覆盖。"), QStringLiteral("打开数据目录"),
+                  [this] { openDataDirectory(); }, 12000);
+    }
+}
+
+void MainWindow::applyTodoLoadFailureUi()
+{
+    const bool failed = m_store && m_store->todosLoadFailed();
+    if (m_composer)
+        m_composer->setEnabled(!failed);
+    if (m_addButton)
+        m_addButton->setEnabled(!failed);
+    if (m_composerDate)
+        m_composerDate->setEnabled(!failed);
+    if (m_todoLoadBanner)
+        m_todoLoadBanner->setVisible(failed);
+    if (m_trayQuickAddAction)
+        m_trayQuickAddAction->setEnabled(!failed);
 }
 
 void MainWindow::showToast(const QString &message, const QString &actionText,
