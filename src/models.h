@@ -152,6 +152,20 @@ struct TodoGroup {
 // PastCompleted shows item count (all completed). Other groups show pending.
 int groupHeaderCount(const TodoGroup &group);
 
+// Standing tray status (#91): incomplete due today + overdue (due < today).
+// Pins still count by due date — they leave Today/Overdue groups in the list
+// but they are still today's unfinished / overdue work.
+struct StandingTodoCounts {
+    int todayOpen = 0;
+    int overdue = 0;
+};
+
+StandingTodoCounts countStandingTodos(const QVector<TodoItem> &items, QDate today);
+// Always both slots, including 0: "今日未办 N · 逾期 M". A standing glance
+// should not hide an empty side by omitting it.
+QString formatStandingTodoStatus(StandingTodoCounts counts);
+QString formatStandingTodoStatus(const QVector<TodoItem> &items, QDate today);
+
 QVector<TodoGroup> buildGroups(const QVector<TodoItem> &items, QDate today,
                                const QString &search = QString());
 

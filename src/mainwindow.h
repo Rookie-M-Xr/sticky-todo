@@ -71,6 +71,7 @@ private:
     void updateHeader();
     void updatePinButton();
     void updateTrayState();
+    QString standingStatusText() const;
     void applyTopMost();
     void applyAutoStart(bool enabled, bool quiet);
 
@@ -194,6 +195,7 @@ private:
     QWidget *m_tab = nullptr;
 
     QMenu *m_trayMenu = nullptr;
+    QAction *m_trayStatusAction = nullptr;
     QAction *m_trayAutoStartAction = nullptr;
     QAction *m_trayShowAction = nullptr;
     QAction *m_trayHideAction = nullptr;

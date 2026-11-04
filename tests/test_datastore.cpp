@@ -2382,6 +2382,122 @@ void testCompletedSectionDefaultCollapsed()
         pass("已完成 default-collapsed + persist fold, no todo mutation");
 }
 
+void testStandingTodoStatus()
+{
+    const int before = g_failed;
+    const QDate today(2026, 11, 3);
+    const QDateTime t0(today, QTime(8, 0));
+
+    auto makeItem = [&](const QString &id, const QString &text, QDate due, bool completed,
+                        QDateTime pinnedAt = QDateTime()) {
+        TodoItem item;
+        item.id = id;
+        item.text = text;
+        item.dueDate = due;
+        item.createdAt = t0;
+        item.updatedAt = t0;
+        item.completed = completed;
+        if (completed)
+            item.completedAt = t0;
+        item.pinnedAt = pinnedAt;
+        return item;
+    };
+
+    const TodoItem openToday = makeItem(QStringLiteral("t1"), QStringLiteral("今天甲"), today, false);
+    const TodoItem openToday2 = makeItem(QStringLiteral("t2"), QStringLiteral("今天乙"), today, false);
+    const TodoItem doneToday = makeItem(QStringLiteral("t3"), QStringLiteral("今天已办"), today, true);
+    const TodoItem openOverdue = makeItem(QStringLiteral("o1"), QStringLiteral("逾期甲"),
+                                          today.addDays(-1), false);
+    const TodoItem openOverdue2 = makeItem(QStringLiteral("o2"), QStringLiteral("逾期乙"),
+                                           today.addDays(-3), false);
+    const TodoItem doneOverdue = makeItem(QStringLiteral("o3"), QStringLiteral("逾期已办"),
+                                          today.addDays(-2), true);
+    const TodoItem openNodate = makeItem(QStringLiteral("n1"), QStringLiteral("无日期"), QDate(),
+                                         false);
+    const TodoItem openTomorrow = makeItem(QStringLiteral("m1"), QStringLiteral("明天"),
+                                           today.addDays(1), false);
+    const TodoItem pinnedToday = makeItem(QStringLiteral("p1"), QStringLiteral("置顶今天"), today,
+                                          false, t0.addSecs(10));
+    const TodoItem pinnedOverdue = makeItem(QStringLiteral("p2"), QStringLiteral("置顶逾期"),
+                                            today.addDays(-1), false, t0.addSecs(20));
+
+    expect(formatStandingTodoStatus(StandingTodoCounts{}) == QStringLiteral("今日未办 0 · 逾期 0"),
+           "stand: empty is 0 · 0");
+    expect(formatStandingTodoStatus(StandingTodoCounts{3, 1}) == QStringLiteral("今日未办 3 · 逾期 1"),
+           "stand: both slots when non-zero");
+    expect(formatStandingTodoStatus(StandingTodoCounts{0, 2}) == QStringLiteral("今日未办 0 · 逾期 2"),
+           "stand: keep 今日未办 0");
+    expect(formatStandingTodoStatus(StandingTodoCounts{4, 0}) == QStringLiteral("今日未办 4 · 逾期 0"),
+           "stand: keep 逾期 0");
+
+    const QVector<TodoItem> mixed = {openToday, openToday2, doneToday, openOverdue, openOverdue2,
+                                     doneOverdue, openNodate, openTomorrow, pinnedToday,
+                                     pinnedOverdue};
+    const StandingTodoCounts counts = countStandingTodos(mixed, today);
+    expect(counts.todayOpen == 3, "stand: today open = unpinned today + pinned today");
+    expect(counts.overdue == 3, "stand: overdue = unpinned overdue + pinned overdue");
+    expect(formatStandingTodoStatus(mixed, today) == QStringLiteral("今日未办 3 · 逾期 3"),
+           "stand: format from items");
+
+    expect(groupFor(pinnedToday, today) == GroupId::Pinned, "stand: pin leaves Today group");
+    expect(groupFor(pinnedOverdue, today) == GroupId::Pinned, "stand: pin leaves Overdue group");
+    expect(openToday.isOverdue(today) == false, "stand: today is not overdue");
+    expect(openOverdue.isOverdue(today), "stand: yesterday is overdue");
+    expect(!doneOverdue.isOverdue(today), "stand: completed past-due is not overdue");
+
+    const QVector<TodoGroup> groups = buildGroups(mixed, today);
+    int todayHeader = 0;
+    int overdueHeader = 0;
+    for (const TodoGroup &group : groups) {
+        if (group.id == GroupId::Today)
+            todayHeader = groupHeaderCount(group);
+        else if (group.id == GroupId::Overdue)
+            overdueHeader = groupHeaderCount(group);
+    }
+    expect(todayHeader == 2, "stand: Today header is unpinned today only");
+    expect(overdueHeader == 2, "stand: Overdue header is unpinned overdue only");
+    expect(counts.todayOpen == todayHeader + 1, "stand: tray today includes the pin");
+    expect(counts.overdue == overdueHeader + 1, "stand: tray overdue includes the pin");
+
+    const StandingTodoCounts rolled = countStandingTodos(mixed, today.addDays(1));
+    expect(rolled.todayOpen == 1, "stand: midnight — tomorrow becomes today");
+    expect(rolled.overdue == 6, "stand: midnight — former today + overdue + pins");
+    expect(formatStandingTodoStatus(mixed, today.addDays(1)) == QStringLiteral("今日未办 1 · 逾期 6"),
+           "stand: midnight copy");
+
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "stand-store: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    {
+        DataStore store;
+        expect(store.load(), "stand-store: load");
+        const QString a = store.addTodo(QStringLiteral("今天未办"), today);
+        const QString b = store.addTodo(QStringLiteral("昨天未办"), today.addDays(-1));
+        const QString c = store.addTodo(QStringLiteral("明天未办"), today.addDays(1));
+        expect(!a.isEmpty() && !b.isEmpty() && !c.isEmpty(), "stand-store: seeded");
+        StandingTodoCounts live = countStandingTodos(store.todos(), today);
+        expect(live.todayOpen == 1 && live.overdue == 1, "stand-store: add matches 1 · 1");
+        expect(store.setCompleted(a, true), "stand-store: complete today");
+        live = countStandingTodos(store.todos(), today);
+        expect(live.todayOpen == 0 && live.overdue == 1, "stand-store: complete drops today");
+        expect(store.updateDue(b, today), "stand-store: move overdue to today");
+        live = countStandingTodos(store.todos(), today);
+        expect(live.todayOpen == 1 && live.overdue == 0, "stand-store: due edit moves counts");
+        expect(store.addTodo(QStringLiteral("再加一条今天"), today).size() > 0,
+               "stand-store: add again");
+        live = countStandingTodos(store.todos(), today);
+        expect(live.todayOpen == 2 && live.overdue == 0, "stand-store: add increments today");
+        expect(formatStandingTodoStatus(store.todos(), today)
+                   == QStringLiteral("今日未办 2 · 逾期 0"),
+               "stand-store: copy after add/complete/due");
+    }
+
+    if (g_failed == before)
+        pass("standing tray counts: today/overdue, pins, midnight, add/complete/due");
+}
+
 void testTooltipChromeContract()
 {
     const int before = g_failed;
@@ -2449,6 +2565,7 @@ int main(int argc, char *argv[])
     testQuickAddMatchesComposerGrouping();
     testCompletedSectionGrouping();
     testCompletedSectionDefaultCollapsed();
+    testStandingTodoStatus();
     testTooltipChromeContract();
 
     if (g_failed != 0) {
