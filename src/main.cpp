@@ -34,7 +34,6 @@ int main(int argc, char *argv[])
     WinUtils::clearDownloadedFileMarks();
 
     MainWindow window;
-    window.show();
-    WinUtils::activateWindow(&window);
+    window.presentOnStartup();
     return app.exec();
 }
