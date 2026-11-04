@@ -238,6 +238,16 @@ QString formatStandingTodoStatus(const QVector<TodoItem> &items, QDate today)
     return formatStandingTodoStatus(countStandingTodos(items, today));
 }
 
+QString completeUndoActionLabel()
+{
+    return QStringLiteral("撤销");
+}
+
+QString completeUndoToastMessage(const QString &itemLabel)
+{
+    return QStringLiteral("已完成“%1”").arg(itemLabel);
+}
+
 GroupId groupFor(const TodoItem &item, QDate today)
 {
     // #79: every completed item (including completed pins) leaves the

@@ -166,6 +166,31 @@ StandingTodoCounts countStandingTodos(const QVector<TodoItem> &items, QDate toda
 QString formatStandingTodoStatus(StandingTodoCounts counts);
 QString formatStandingTodoStatus(const QVector<TodoItem> &items, QDate today);
 
+// #92: session-only single-slot undo after mark-complete. Completing
+// another item replaces the slot. take()/expire() clear it. Not a
+// history stack and not persisted.
+constexpr int kCompleteUndoTimeoutMs = 5000;
+
+struct LastCompleteUndo {
+    QString id;
+
+    void remember(const QString &todoId) { id = todoId; }
+
+    QString take()
+    {
+        const QString out = id;
+        id.clear();
+        return out;
+    }
+
+    void expire() { id.clear(); }
+
+    bool available() const { return !id.isEmpty(); }
+};
+
+QString completeUndoActionLabel();
+QString completeUndoToastMessage(const QString &itemLabel);
+
 QVector<TodoGroup> buildGroups(const QVector<TodoItem> &items, QDate today,
                                const QString &search = QString());
 

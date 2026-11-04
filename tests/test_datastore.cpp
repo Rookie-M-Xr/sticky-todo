@@ -2382,6 +2382,92 @@ void testCompletedSectionDefaultCollapsed()
         pass("已完成 default-collapsed + persist fold, no todo mutation");
 }
 
+const TodoGroup *findGroup(const QVector<TodoGroup> &groups, GroupId id)
+{
+    for (const TodoGroup &group : groups) {
+        if (group.id == id)
+            return &group;
+    }
+    return nullptr;
+}
+
+bool groupHasId(const TodoGroup *group, const QString &id)
+{
+    if (!group)
+        return false;
+    for (const TodoItem &item : group->items) {
+        if (item.id == id)
+            return true;
+    }
+    return false;
+}
+
+void testLastCompleteUndoSlotAndLatestOnly()
+{
+    const int before = g_failed;
+    LastCompleteUndo slot;
+    expect(!slot.available(), "complete-undo: empty at start");
+    expect(slot.take().isEmpty(), "complete-undo: take empty is empty");
+
+    slot.remember(QStringLiteral("first"));
+    slot.remember(QStringLiteral("second"));
+    expect(slot.available() && slot.id == QStringLiteral("second"),
+           "complete-undo: only latest id is kept");
+    expect(slot.take() == QStringLiteral("second"), "complete-undo: take returns latest");
+    expect(!slot.available() && slot.take().isEmpty(),
+           "complete-undo: take clears the slot");
+
+    slot.remember(QStringLiteral("stale"));
+    slot.expire();
+    expect(!slot.available(), "complete-undo: expire / timeout clears");
+    expect(kCompleteUndoTimeoutMs == 5000, "complete-undo: toast is short-lived");
+    expect(completeUndoActionLabel() == QStringLiteral("撤销"),
+           "complete-undo: action label");
+    expect(completeUndoToastMessage(QStringLiteral("甲")) == QStringLiteral("已完成“甲”"),
+           "complete-undo: toast copy");
+
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "complete-undo: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    const QDate today = QDate::currentDate();
+    DataStore store;
+    expect(store.load(), "complete-undo: load");
+    const QString firstId = store.addTodo(QStringLiteral("误完成甲"), today);
+    const QString secondId = store.addTodo(QStringLiteral("误完成乙"), today);
+    expect(!firstId.isEmpty() && !secondId.isEmpty(), "complete-undo: seeded");
+    expect(store.setCompleted(firstId, true), "complete-undo: complete first");
+    expect(store.setCompleted(secondId, true), "complete-undo: complete second");
+
+    LastCompleteUndo live;
+    live.remember(firstId);
+    live.remember(secondId);
+    const QString undoId = live.take();
+    expect(undoId == secondId, "complete-undo: apply latest id");
+    expect(store.setCompleted(undoId, false), "complete-undo: restore latest");
+    expect(!live.available(), "complete-undo: slot empty after apply");
+
+    const TodoItem *first = store.findTodo(firstId);
+    const TodoItem *second = store.findTodo(secondId);
+    expect(first && first->completed, "complete-undo: earlier complete stays done");
+    expect(second && !second->completed, "complete-undo: latest returns incomplete");
+    expect(second && !second->completedAt.isValid(),
+           "complete-undo: restore clears completedAt");
+
+    const QVector<TodoGroup> groups = buildGroups(store.todos(), today);
+    const TodoGroup *done = findGroup(groups, GroupId::PastCompleted);
+    const TodoGroup *todayGroup = findGroup(groups, GroupId::Today);
+    expect(groupHasId(done, firstId) && !groupHasId(done, secondId),
+           "complete-undo: only earlier item stays in 已完成");
+    expect(groupHasId(todayGroup, secondId) && !groupHasId(todayGroup, firstId),
+           "complete-undo: restored item returns to Today");
+    expect(live.take().isEmpty(), "complete-undo: second apply has nothing to undo");
+
+    if (g_failed == before)
+        pass("last complete-toggle undo: happy path + latest-only slot");
+}
+
 void testStandingTodoStatus()
 {
     const int before = g_failed;
@@ -2565,6 +2651,7 @@ int main(int argc, char *argv[])
     testQuickAddMatchesComposerGrouping();
     testCompletedSectionGrouping();
     testCompletedSectionDefaultCollapsed();
+    testLastCompleteUndoSlotAndLatestOnly();
     testStandingTodoStatus();
     testTooltipChromeContract();
 
