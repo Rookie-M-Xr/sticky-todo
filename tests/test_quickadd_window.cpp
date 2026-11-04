@@ -15,6 +15,7 @@
 #include <QEvent>
 #include <QFile>
 #include <QKeyEvent>
+#include <QLineEdit>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -41,6 +42,16 @@ struct MainWindowTestAccess {
     static bool trayInstalled(const MainWindow &window) { return window.m_trayInstalled; }
 
     static bool startHiddenFlag(const MainWindow &window) { return window.m_startHiddenToTray; }
+
+    static bool composerEnabled(const MainWindow &window)
+    {
+        return window.m_composer && window.m_composer->isEnabled();
+    }
+
+    static bool todoLoadBannerVisible(const MainWindow &window)
+    {
+        return window.m_todoLoadBanner && window.m_todoLoadBanner->isVisible();
+    }
 };
 
 namespace {
@@ -176,6 +187,41 @@ void pump()
 struct TrayOverride {
     explicit TrayOverride(int available) { WinUtils::setTrayAvailableOverrideForTest(available); }
     ~TrayOverride() { WinUtils::setTrayAvailableOverrideForTest(-1); }
+};
+
+bool writeRaw(const QString &path, const QByteArray &bytes)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return false;
+    return file.write(bytes) == bytes.size();
+}
+
+QByteArray readRaw(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    return file.readAll();
+}
+
+bool writeSingleTodoFile(const QString &path, const QString &id, const QString &text)
+{
+    QJsonObject item;
+    item.insert(QStringLiteral("id"), id);
+    item.insert(QStringLiteral("text"), text);
+    item.insert(QStringLiteral("createdAt"),
+                QDateTime::currentDateTime().toString(Qt::ISODateWithMs));
+    item.insert(QStringLiteral("updatedAt"), item.value(QStringLiteral("createdAt")));
+    QJsonObject root;
+    root.insert(QStringLiteral("schemaVersion"), 1);
+    root.insert(QStringLiteral("todos"), QJsonArray{item});
+    return writeRaw(path, QJsonDocument(root).toJson(QJsonDocument::Compact));
+}
+
+struct RestoreReplyOverride {
+    explicit RestoreReplyOverride(const char *reply) { qputenv("STICKY_TODO_RESTORE_REPLY", reply); }
+    ~RestoreReplyOverride() { qunsetenv("STICKY_TODO_RESTORE_REPLY"); }
 };
 
 bool writeAutoStartSetting(const QString &dataDir, bool autoStart)
@@ -892,6 +938,102 @@ void testTrayWithoutAutostartStaysVisible()
         pass("autostart off + tray: cold start visible (#97)");
 }
 
+void testWindowRestoreFromBak()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "win-restore: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    const QString todosPath = QDir(dataDir).filePath(QStringLiteral("todos.json"));
+    const QString bakPath = todosPath + QStringLiteral(".bak");
+    const QString keepId = QStringLiteral("win-bak-id");
+    const QString bakText = QStringLiteral("从备份回来的待办");
+    const QByteArray corrupt = QByteArrayLiteral("{ broken window primary");
+    expect(writeSingleTodoFile(bakPath, keepId, bakText), "win-restore: seed bak");
+    expect(writeRaw(todosPath, corrupt), "win-restore: corrupt primary");
+
+    RestoreReplyOverride hook("yes");
+    MainWindow window;
+    window.show();
+    pump();
+
+    bool inList = false;
+    for (TodoRow *row : window.findChildren<TodoRow *>()) {
+        if (row && row->item().id == keepId && row->item().text == bakText)
+            inList = true;
+    }
+    expect(inList, "win-restore: list matches bak after confirm");
+    expect(MainWindowTestAccess::composerEnabled(window), "win-restore: composer re-enabled");
+    expect(!MainWindowTestAccess::todoLoadBannerVisible(window),
+           "win-restore: failure banner hidden");
+    expect(diskHasText(dataDir, bakText), "win-restore: primary rewritten from bak");
+    expect(readRaw(todosPath) != corrupt, "win-restore: corrupt bytes replaced");
+
+    if (g_failed == before)
+        pass("window: corrupt + good bak + yes hook restores list");
+}
+
+void testWindowRestoreDeclinedKeepsFailure()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "win-decline: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    const QString todosPath = QDir(dataDir).filePath(QStringLiteral("todos.json"));
+    const QString bakPath = todosPath + QStringLiteral(".bak");
+    const QByteArray corrupt = QByteArrayLiteral("{ broken window primary no restore");
+    expect(writeSingleTodoFile(bakPath, QStringLiteral("hidden-bak"),
+                               QStringLiteral("不该出现的备份项")),
+           "win-decline: seed bak");
+    expect(writeRaw(todosPath, corrupt), "win-decline: corrupt primary");
+
+    RestoreReplyOverride hook("no");
+    MainWindow window;
+    window.show();
+    pump();
+
+    expect(window.findChildren<TodoRow *>().isEmpty(), "win-decline: list stays empty");
+    expect(!MainWindowTestAccess::composerEnabled(window), "win-decline: composer read-only");
+    expect(MainWindowTestAccess::todoLoadBannerVisible(window), "win-decline: failure banner");
+    auto *openBtn = window.findChild<QPushButton *>(QStringLiteral("todoLoadOpenDataDir"));
+    expect(openBtn != nullptr && openBtn->isVisible(), "win-decline: 打开数据目录 exposed");
+    expect(readRaw(todosPath) == corrupt, "win-decline: primary not overwritten");
+
+    if (g_failed == before)
+        pass("window: decline restore keeps empty read-only failure");
+}
+
+void testWindowCorruptWithoutBak()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "win-nobak: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    const QString todosPath = QDir(dataDir).filePath(QStringLiteral("todos.json"));
+    const QByteArray corrupt = QByteArrayLiteral("totally-not-json");
+    expect(writeRaw(todosPath, corrupt), "win-nobak: corrupt primary");
+
+    MainWindow window;
+    window.show();
+    pump();
+
+    expect(window.findChildren<TodoRow *>().isEmpty(), "win-nobak: empty list");
+    expect(!MainWindowTestAccess::composerEnabled(window), "win-nobak: composer read-only");
+    expect(MainWindowTestAccess::todoLoadBannerVisible(window), "win-nobak: failure banner");
+    expect(window.findChild<QPushButton *>(QStringLiteral("todoLoadOpenDataDir")) != nullptr,
+           "win-nobak: 打开数据目录");
+    expect(readRaw(todosPath) == corrupt, "win-nobak: primary kept");
+
+    if (g_failed == before)
+        pass("window: no bak keeps explicit failure without silent empty write");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -916,6 +1058,9 @@ int main(int argc, char *argv[])
     testHiddenWindowTrayStandingStatus();
     testCompleteUndoToastHappyPath();
     testCompleteUndoToastLatestOnlyAndTimeout();
+    testWindowRestoreFromBak();
+    testWindowRestoreDeclinedKeepsFailure();
+    testWindowCorruptWithoutBak();
 
     if (g_failed != 0) {
         std::fprintf(stderr, "%d quick-add window assertion(s) failed\n", g_failed);

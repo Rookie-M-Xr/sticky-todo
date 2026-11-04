@@ -133,6 +133,9 @@ private:
     void finishQuit();
     void showToast(const QString &message, const QString &actionText = QString(),
                    std::function<void()> action = {}, int timeoutMs = 5000);
+    void maybeOfferTodoRestore();
+    void applyTodoLoadFailureUi();
+    void openDataDirectory();
     void openQuickAdd();
     void handleQuickAddAccepted(const QString &text);
 
@@ -181,6 +184,7 @@ private:
     IconButton *m_closeButton = nullptr;
     SearchBox *m_searchBox = nullptr;
     QWidget *m_integrityBanner = nullptr;
+    QWidget *m_todoLoadBanner = nullptr;
     QStackedWidget *m_stack = nullptr;
     TodoScrollView *m_todosView = nullptr;
     SettingsPage *m_settingsPage = nullptr;

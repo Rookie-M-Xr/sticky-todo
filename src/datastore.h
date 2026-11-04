@@ -64,6 +64,15 @@ public:
     bool wasFirstRun() const { return m_firstRun; }
     QString dataDir() const { return m_dataDir; }
     QString todosPath() const;
+    // #107: primary todos.json failed to parse. In-memory list is empty and
+    // writes to the primary file are blocked until restoreTodosFromBackup().
+    bool todosLoadFailed() const { return m_todosLoadFailed; }
+    bool todoBackupAvailable() const { return m_todoBackupAvailable; }
+    QString todoBackupPath() const;
+    QString lastTodoLoadError() const { return m_todoLoadError; }
+    // Copy the sibling todos.json.bak over the primary and reload.
+    // Returns false if no readable backup was offered, or the copy/reload failed.
+    bool restoreTodosFromBackup();
     QString settingsPath() const;
     QString archivePath() const;
     QString remindersPath() const;
@@ -190,8 +199,8 @@ private:
     void savePomodoroStatsNow();
     bool reloadPomodoroStatsBackup(QString *warning);
     void preserveCorruptFile(const QString &path);
-    bool reloadTodoBackup(QString *warning);
     bool reloadSettingsBackup(QString *warning);
+    bool rejectTodosWrite();
     void addNotice(const QString &text);
     QString resolveDataDir() const;
     void touchSettings();
@@ -235,6 +244,9 @@ private:
     QTimer m_pomodoroStatsSaveTimer;
     bool m_loaded = false;
     bool m_firstRun = false;
+    bool m_todosLoadFailed = false;
+    bool m_todoBackupAvailable = false;
+    QString m_todoLoadError;
     bool m_todosDirty = false;
     bool m_settingsDirty = false;
     bool m_remindersDirty = false;
