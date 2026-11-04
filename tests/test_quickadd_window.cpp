@@ -1,5 +1,6 @@
 #include "datastore.h"
 #include "mainwindow.h"
+#include "models.h"
 #include "theme.h"
 #include "todoview.h"
 #include "widgets.h"
@@ -7,12 +8,15 @@
 #include <QAction>
 #include <QApplication>
 #include <QDate>
+#include <QDateTime>
 #include <QDir>
 #include <QEvent>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLabel>
+#include <QPushButton>
 #include <QTimer>
 #include <QUuid>
 
@@ -53,6 +57,67 @@ QuickAddPopup *findPopup()
             return popup;
     }
     return nullptr;
+}
+
+Snackbar *findStandaloneSnackbar()
+{
+    const auto widgets = QApplication::topLevelWidgets();
+    for (QWidget *widget : widgets) {
+        if (auto *bar = qobject_cast<Snackbar *>(widget))
+            return bar;
+    }
+    return nullptr;
+}
+
+bool writeDueReminder(const QString &dataDir, const QString &text)
+{
+    const QDateTime now = QDateTime::currentDateTime();
+    QJsonObject row;
+    row.insert(QStringLiteral("id"), QUuid::createUuid().toString(QUuid::WithoutBraces));
+    row.insert(QStringLiteral("text"), text);
+    row.insert(QStringLiteral("intervalMinutes"), 1);
+    row.insert(QStringLiteral("activeStart"), QStringLiteral("00:00"));
+    row.insert(QStringLiteral("activeEnd"), QStringLiteral("24:00"));
+    row.insert(QStringLiteral("enabled"), true);
+    row.insert(QStringLiteral("lastFiredAt"), now.addSecs(-120).toString(Qt::ISODateWithMs));
+    row.insert(QStringLiteral("createdAt"), now.addSecs(-3600).toString(Qt::ISODateWithMs));
+    row.insert(QStringLiteral("updatedAt"), now.addSecs(-120).toString(Qt::ISODateWithMs));
+    QJsonObject root;
+    root.insert(QStringLiteral("schemaVersion"), 1);
+    root.insert(QStringLiteral("reminders"), QJsonArray{row});
+    QFile file(QDir(dataDir).filePath(QStringLiteral("reminders.json")));
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return false;
+    file.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    return true;
+}
+
+QDateTime reminderLastFiredOnDisk(const QString &dataDir)
+{
+    QFile file(QDir(dataDir).filePath(QStringLiteral("reminders.json")));
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    const QJsonArray reminders = doc.object().value(QStringLiteral("reminders")).toArray();
+    if (reminders.isEmpty())
+        return {};
+    return QDateTime::fromString(
+        reminders.at(0).toObject().value(QStringLiteral("lastFiredAt")).toString(),
+        Qt::ISODateWithMs);
+}
+
+bool clickSnackbarButton(Snackbar *bar, const QString &label)
+{
+    if (!bar)
+        return false;
+    const auto buttons = bar->findChildren<QPushButton *>();
+    for (QPushButton *button : buttons) {
+        if (button && button->isVisible() && button->text() == label) {
+            button->click();
+            return true;
+        }
+    }
+    return false;
 }
 
 int todoCountOnDisk(const QString &dataDir)
@@ -227,6 +292,90 @@ void testCompletedSectionFoldedInWindow()
         pass("window: 已完成 default-collapsed, expand, data intact");
 }
 
+void testHiddenWindowReminderDoesNotRaise()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "rem-hide: data dir");
+    if (dataDir.isEmpty())
+        return;
+    const QString title = QStringLiteral("藏窗喝水");
+    expect(writeDueReminder(dataDir, title), "rem-hide: seed overdue reminder");
+
+    MainWindow window;
+    window.show();
+    window.hide();
+    expect(!window.isVisible(), "rem-hide: hidden like tray before fire");
+    pump();
+    QTimer::singleShot(0, [] {});
+    pump();
+
+    expect(!window.isVisible(), "rem-hide: fire does not show main window");
+    const QDateTime fired = reminderLastFiredOnDisk(dataDir);
+    expect(fired.isValid(), "rem-hide: lastFired written");
+    expect(fired.isValid() && fired.secsTo(QDateTime::currentDateTime()) < 30,
+           "rem-hide: lastFired advanced at fire");
+
+    Snackbar *onCard = window.findChild<Snackbar *>();
+    expect(onCard != nullptr, "rem-hide: in-card snackbar exists");
+    expect(!(onCard && onCard->isVisible()),
+           "rem-hide: in-card snackbar stays off (would show parent)");
+
+    Snackbar *standalone = findStandaloneSnackbar();
+    expect(standalone != nullptr && standalone->isVisible(),
+           "rem-hide: standalone reminder bar appears");
+    expect(standalone && standalone != onCard, "rem-hide: bar is not the card child");
+    if (standalone) {
+        auto *label = standalone->findChild<QLabel *>();
+        expect(label && label->toolTip() == title, "rem-hide: bar title is reminder text");
+        expect(clickSnackbarButton(standalone, reminderDismissLabel()),
+               "rem-hide: 忽略 is clickable");
+    }
+    pump();
+    expect(!window.isVisible(), "rem-hide: dismiss leaves main window hidden");
+
+    window.show();
+    pump();
+    expect(window.isVisible(), "rem-hide: 显示 still opens the window");
+    expect(!(findStandaloneSnackbar() && findStandaloneSnackbar()->isVisible()),
+           "rem-hide: standalone bar dismissed on show");
+
+    if (g_failed == before)
+        pass("hidden window reminder fire does not raise (#94)");
+}
+
+void testVisibleWindowReminderStillShowsBanner()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "rem-show: data dir");
+    if (dataDir.isEmpty())
+        return;
+    const QString title = QStringLiteral("开窗喝水");
+    expect(writeDueReminder(dataDir, title), "rem-show: seed overdue reminder");
+
+    MainWindow window;
+    window.show();
+    pump();
+    QTimer::singleShot(0, [] {});
+    pump();
+
+    expect(window.isVisible(), "rem-show: visible window stays visible");
+    Snackbar *onCard = window.findChild<Snackbar *>();
+    expect(onCard && onCard->isVisible(), "rem-show: in-card reminder bar still shows");
+    if (onCard) {
+        auto *label = onCard->findChild<QLabel *>();
+        expect(label && label->toolTip() == title, "rem-show: in-card title kept");
+        expect(clickSnackbarButton(onCard, reminderDismissLabel()),
+               "rem-show: 忽略 still works");
+    }
+    pump();
+    expect(window.isVisible(), "rem-show: dismiss does not hide the window");
+
+    if (g_failed == before)
+        pass("visible window reminder banner unchanged (#94)");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -240,6 +389,8 @@ int main(int argc, char *argv[])
 
     testHiddenWindowTrayAddAndCancel();
     testCompletedSectionFoldedInWindow();
+    testHiddenWindowReminderDoesNotRaise();
+    testVisibleWindowReminderStillShowsBanner();
 
     if (g_failed != 0) {
         std::fprintf(stderr, "%d quick-add window assertion(s) failed\n", g_failed);

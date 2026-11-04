@@ -140,6 +140,27 @@ void placeSnackbarOnCard(QWidget *card, QWidget *composerBar, QWidget *snackbar)
     snackbar->setGeometry(inset, y, qMax(1, card->width() - inset * 2), barHeight);
 }
 
+// Top-level reminder bar: sit near the last note rect so it feels like the
+// in-card banner, without parenting that would show a hidden MainWindow (#94).
+void placeStandaloneReminderBar(QWidget *snackbar, const QRect &anchor)
+{
+    if (!snackbar)
+        return;
+    const int barHeight = qMax(42, snackbar->height());
+    const int width = qBound(260, anchor.isValid() ? anchor.width() - 36 : 332, 420);
+    QScreen *screen = QGuiApplication::primaryScreen();
+    const QRect avail = screen ? screen->availableGeometry() : QRect(0, 0, 800, 600);
+    int x = avail.center().x() - width / 2;
+    int y = avail.bottom() - barHeight - 48;
+    if (anchor.isValid()) {
+        x = anchor.x() + (anchor.width() - width) / 2;
+        y = anchor.bottom() - barHeight - 18;
+    }
+    x = std::clamp(x, avail.left() + 8, qMax(avail.left() + 8, avail.right() - width - 8));
+    y = std::clamp(y, avail.top() + 8, qMax(avail.top() + 8, avail.bottom() - barHeight - 8));
+    snackbar->setGeometry(x, y, width, barHeight);
+}
+
 class DockTab : public QWidget
 {
 public:
@@ -473,6 +494,11 @@ MainWindow::~MainWindow()
         m_quickAdd->hide();
         delete m_quickAdd;
         m_quickAdd = nullptr;
+    }
+    if (m_hiddenReminderBar) {
+        m_hiddenReminderBar->hide();
+        delete m_hiddenReminderBar;
+        m_hiddenReminderBar = nullptr;
     }
     if (qApp)
         qApp->removeEventFilter(this);
@@ -1090,6 +1116,8 @@ void MainWindow::ensureVisible()
 void MainWindow::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
+    if (m_hiddenReminderBar)
+        m_hiddenReminderBar->hide();
     applyCardGeometry();
     applyTopMost();
     WinUtils::suppressSystemFrame(this);
@@ -2273,6 +2301,8 @@ void MainWindow::resetWindowPosition()
 
 void MainWindow::showAndActivate()
 {
+    if (m_hiddenReminderBar)
+        m_hiddenReminderBar->hide();
     if (isMinimized())
         showNormal();
     if (m_collapsed)
@@ -2286,6 +2316,46 @@ void MainWindow::showAndActivate()
     raise();
     WinUtils::activateWindow(this);
     updateTrayState();
+}
+
+bool MainWindow::isHiddenLikeTray() const
+{
+    return !isVisible() || isMinimized();
+}
+
+void MainWindow::ensureHiddenReminderBar()
+{
+    if (m_hiddenReminderBar)
+        return;
+    // Parentless Tool window — same reason as QuickAddPopup: showing a child
+    // of the card would show the hidden MainWindow (#94).
+    m_hiddenReminderBar = new Snackbar(nullptr);
+    m_hiddenReminderBar->setObjectName(QStringLiteral("hiddenReminderBar"));
+    m_hiddenReminderBar->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint
+                                        | Qt::WindowStaysOnTopHint
+                                        | Qt::NoDropShadowWindowHint);
+    m_hiddenReminderBar->setAttribute(Qt::WA_ShowWithoutActivating, true);
+    m_hiddenReminderBar->setAttribute(Qt::WA_QuitOnClose, false);
+    m_hiddenReminderBar->setAttribute(Qt::WA_DeleteOnClose, false);
+    m_hiddenReminderBar->setAttribute(Qt::WA_TranslucentBackground);
+}
+
+void MainWindow::presentReminderBanner(const QString &id, const QString &message, Snackbar *bar)
+{
+    if (!bar)
+        return;
+    stopCollapseCountdown();
+    QVector<QPair<QString, std::function<void()>>> leading;
+    leading.append({reminderDismissLabel(),
+                    [this, id] { dismissReminderOccurrence(id); }});
+    QVector<QPair<QString, std::function<void()>>> actions;
+    for (int minutes : kReminderSnoozePresets) {
+        actions.append({reminderSnoozePresetLabel(minutes),
+                        [this, id, minutes] { snoozeReminder(id, minutes); }});
+    }
+    bar->showActions(message, actions, 9000, reminderSnoozeMenuLabel(), leading,
+                     reminderCustomSnoozePlaceholder(),
+                     [this, id](int minutes) { snoozeReminder(id, minutes); });
 }
 
 void MainWindow::minimizeToTray()
@@ -2465,6 +2535,13 @@ void MainWindow::showToast(const QString &message, const QString &actionText,
 {
     if (!m_snackbar)
         return;
+    // In-card snackbar is parented to the note. show() would raise a hidden
+    // main window (#94). Keep follow-up copy on the tray balloon instead.
+    if (isHiddenLikeTray()) {
+        if (m_trayInstalled)
+            WinUtils::showTrayBalloon(this, QStringLiteral("Sticky Todo"), message);
+        return;
+    }
     stopCollapseCountdown();
     m_snackbar->showMessage(message, actionText, std::move(action), timeoutMs);
     placeSnackbarOnCard(m_card, m_composerBar, m_snackbar);
@@ -2886,25 +2963,22 @@ void MainWindow::notifyReminderDue(const QString &id, const QString &text)
     // #77: title first — no "提醒：" prefix, no 28px pre-elide. Snackbar
     // keeps the full string as tooltip and wraps up to two lines.
     const QString message = reminderFireLabel(text);
-    if (m_collapsed)
-        expandFromTab(false);
-    if (!isVisible() || isMinimized())
-        showAndActivate();
-    if (m_snackbar) {
-        stopCollapseCountdown();
-        QVector<QPair<QString, std::function<void()>>> leading;
-        leading.append({reminderDismissLabel(),
-                        [this, id] { dismissReminderOccurrence(id); }});
-        QVector<QPair<QString, std::function<void()>>> actions;
-        for (int minutes : kReminderSnoozePresets) {
-            actions.append({reminderSnoozePresetLabel(minutes),
-                            [this, id, minutes] { snoozeReminder(id, minutes); }});
+    if (isHiddenLikeTray()) {
+        // #94: stay in the tray. Do not expandFromTab / showAndActivate /
+        // show() the in-card snackbar (child show() would show the parent).
+        ensureHiddenReminderBar();
+        presentReminderBanner(id, message, m_hiddenReminderBar);
+        placeStandaloneReminderBar(m_hiddenReminderBar, geometry());
+        if (m_hiddenReminderBar)
+            m_hiddenReminderBar->raise();
+    } else {
+        if (m_collapsed)
+            expandFromTab(false);
+        presentReminderBanner(id, message, m_snackbar);
+        if (m_snackbar) {
+            placeSnackbarOnCard(m_card, m_composerBar, m_snackbar);
+            m_snackbar->raise();
         }
-        m_snackbar->showActions(message, actions, 9000, reminderSnoozeMenuLabel(), leading,
-                                reminderCustomSnoozePlaceholder(),
-                                [this, id](int minutes) { snoozeReminder(id, minutes); });
-        placeSnackbarOnCard(m_card, m_composerBar, m_snackbar);
-        m_snackbar->raise();
     }
     if (m_trayInstalled)
         WinUtils::showTrayBalloon(this, QStringLiteral("Sticky Todo"), message);
