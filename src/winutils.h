@@ -44,6 +44,10 @@ void prepareRoundedPopup(QWidget *popup);
 void suppressSystemFrame(QWidget *window);
 
 bool trayAvailable();
+// Offscreen/box tests only. 1 = pretend a tray exists and icon install
+// succeeds; 0 = force unavailable; -1 = platform default (Win shell /
+// Linux stub). Does not change OS autostart registration.
+void setTrayAvailableOverrideForTest(int available);
 unsigned int trayCallbackMessage();
 bool installTrayIcon(QWidget *owner, const QImage &image, const QString &tip);
 void updateTrayTip(QWidget *owner, const QString &tip);
