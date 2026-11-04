@@ -116,7 +116,10 @@ private:
     void minimizeToTray();
     void hideToTray();
     void toggleByHotkey();
+    bool isHiddenLikeTray() const;
     bool isOsForeground() const;
+    void ensureHiddenReminderBar();
+    void presentReminderBanner(const QString &id, const QString &message, Snackbar *bar);
     void applyGlobalHotkey(bool quiet);
     void quitApplication();
     void finishQuit();
@@ -182,6 +185,9 @@ private:
     DateChip *m_composerDate = nullptr;
     CircleAddButton *m_addButton = nullptr;
     Snackbar *m_snackbar = nullptr;
+    // Parentless fire-time bar so a hidden main window is not shown by QWidget
+    // parenting (#94). Created on first hidden-window fire.
+    Snackbar *m_hiddenReminderBar = nullptr;
     QWidget *m_resizeGrip = nullptr;
     QWidget *m_tab = nullptr;
 
