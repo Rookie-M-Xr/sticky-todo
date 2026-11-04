@@ -2751,15 +2751,31 @@ void MainWindow::handlePinToggle(const QString &id)
 
 void MainWindow::handleCompletion(const QString &id, bool completed)
 {
-    m_store->setCompleted(id, completed);
-    if (completed) {
-        if (m_dailyVisible && m_dailyPage)
-            m_dailyPage->refresh();
-        if (m_weeklyVisible && m_weeklyPage)
-            m_weeklyPage->refresh();
-        if (m_monthlyVisible && m_monthlyPage)
-            m_monthlyPage->refresh();
-    }
+    const TodoItem *item = m_store->findTodo(id);
+    if (!item)
+        return;
+    const QString text = item->text;
+    const bool changed = item->completed != completed;
+    if (!m_store->setCompleted(id, completed))
+        return;
+    if (!completed || !changed)
+        return;
+    if (m_dailyVisible && m_dailyPage)
+        m_dailyPage->refresh();
+    if (m_weeklyVisible && m_weeklyPage)
+        m_weeklyPage->refresh();
+    if (m_monthlyVisible && m_monthlyPage)
+        m_monthlyPage->refresh();
+    m_lastCompleteUndo.remember(id);
+    const QString label = elidedOneLine(text, 30, Theme::uiFont(12));
+    showToast(completeUndoToastMessage(label), completeUndoActionLabel(),
+              [this] {
+                  const QString undoId = m_lastCompleteUndo.take();
+                  if (undoId.isEmpty() || !m_store)
+                      return;
+                  m_store->setCompleted(undoId, false);
+              },
+              kCompleteUndoTimeoutMs);
 }
 
 void MainWindow::handleTextEdited(const QString &id, const QString &text)

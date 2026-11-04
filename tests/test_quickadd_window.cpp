@@ -10,6 +10,7 @@
 #include <QDate>
 #include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEvent>
 #include <QFile>
 #include <QKeyEvent>
@@ -602,6 +603,178 @@ void testHiddenWindowTrayStandingStatus()
         pass("hidden window tray standing status matches list after complete/add");
 }
 
+TodoRow *findRowByTextAny(QWidget *root, const QString &text)
+{
+    const auto rows = root->findChildren<TodoRow *>();
+    for (TodoRow *row : rows) {
+        if (row && row->item().text == text)
+            return row;
+    }
+    return nullptr;
+}
+
+bool sectionHasText(GroupSection *section, const QString &text, bool completed)
+{
+    if (!section)
+        return false;
+    const auto rows = section->findChildren<TodoRow *>();
+    for (TodoRow *row : rows) {
+        if (row && row->item().text == text && row->item().completed == completed)
+            return true;
+    }
+    return false;
+}
+
+void completeVisibleRow(QWidget *root, const QString &text)
+{
+    TodoRow *row = findRowByText(root, text);
+    if (!row)
+        return;
+    QKeyEvent space(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier);
+    QApplication::sendEvent(row, &space);
+    pump();
+    QTimer::singleShot(0, [] {});
+    pump();
+}
+
+void waitHidden(QWidget *widget, int timeoutMs)
+{
+    if (!widget)
+        return;
+    QElapsedTimer timer;
+    timer.start();
+    while (widget->isVisible() && timer.elapsed() < timeoutMs)
+        QApplication::processEvents();
+}
+
+void testCompleteUndoToastHappyPath()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "complete-undo-ui: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    const QString title = QStringLiteral("误点完成");
+    expect(seedOpenTodo(dataDir, title, kPomodoroDefaultMinutes),
+           "complete-undo-ui: seed open todo");
+
+    MainWindow window;
+    window.show();
+    pump();
+    QTimer::singleShot(0, [] {});
+    pump();
+
+    GroupSection *today = findSection(&window, GroupId::Today);
+    GroupSection *done = findSection(&window, GroupId::PastCompleted);
+    expect(today && sectionHasText(today, title, false),
+           "complete-undo-ui: starts in Today");
+    expect(!(done && sectionHasText(done, title, true)),
+           "complete-undo-ui: not in 已完成 yet");
+
+    completeVisibleRow(&window, title);
+    TodoRow *doneRow = findRowByTextAny(&window, title);
+    expect(doneRow && doneRow->item().completed, "complete-undo-ui: marked complete");
+    done = findSection(&window, GroupId::PastCompleted);
+    today = findSection(&window, GroupId::Today);
+    expect(done && sectionHasText(done, title, true),
+           "complete-undo-ui: folded into 已完成");
+    expect(!(today && sectionHasText(today, title, false)),
+           "complete-undo-ui: left the open section");
+    expect(done && !done->isExpanded(), "complete-undo-ui: 已完成 stays collapsed");
+
+    Snackbar *bar = window.findChild<Snackbar *>();
+    expect(bar && bar->isVisible(), "complete-undo-ui: toast visible");
+    expect(clickSnackbarButton(bar, completeUndoActionLabel()),
+           "complete-undo-ui: 撤销 is clickable");
+    pump();
+    QTimer::singleShot(0, [] {});
+    pump();
+
+    today = findSection(&window, GroupId::Today);
+    done = findSection(&window, GroupId::PastCompleted);
+    TodoRow *openRow = findRowByText(&window, title);
+    expect(openRow && !openRow->item().completed,
+           "complete-undo-ui: one undo restores incomplete");
+    expect(today && sectionHasText(today, title, false),
+           "complete-undo-ui: returns to Today");
+    expect(!(done && sectionHasText(done, title, true)),
+           "complete-undo-ui: left 已完成");
+    expect(diskHasText(dataDir, title), "complete-undo-ui: incomplete on disk");
+
+    if (g_failed == before)
+        pass("window: complete toast undo restores open section (#92)");
+}
+
+void testCompleteUndoToastLatestOnlyAndTimeout()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "complete-undo-latest: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    const QString first = QStringLiteral("先完成的");
+    const QString second = QStringLiteral("后完成的");
+    {
+        DataStore store;
+        expect(store.load(), "complete-undo-latest: seed load");
+        expect(!store.addTodo(first, QDate::currentDate()).isEmpty(),
+               "complete-undo-latest: seed first");
+        expect(!store.addTodo(second, QDate::currentDate()).isEmpty(),
+               "complete-undo-latest: seed second");
+        expect(store.flush(), "complete-undo-latest: flush");
+    }
+
+    MainWindow window;
+    window.show();
+    pump();
+    QTimer::singleShot(0, [] {});
+    pump();
+
+    completeVisibleRow(&window, first);
+    completeVisibleRow(&window, second);
+
+    Snackbar *bar = window.findChild<Snackbar *>();
+    expect(bar && bar->isVisible(), "complete-undo-latest: toast for latest");
+    expect(clickSnackbarButton(bar, completeUndoActionLabel()),
+           "complete-undo-latest: undo latest");
+    pump();
+    QTimer::singleShot(0, [] {});
+    pump();
+
+    TodoRow *firstRow = findRowByTextAny(&window, first);
+    TodoRow *secondRow = findRowByTextAny(&window, second);
+    expect(firstRow && firstRow->item().completed,
+           "complete-undo-latest: earlier complete stays done");
+    expect(secondRow && !secondRow->item().completed,
+           "complete-undo-latest: only latest is undone");
+    expect(sectionHasText(findSection(&window, GroupId::PastCompleted), first, true),
+           "complete-undo-latest: first stays in 已完成");
+    expect(sectionHasText(findSection(&window, GroupId::Today), second, false),
+           "complete-undo-latest: second returns to Today");
+    expect(!diskHasText(dataDir, first), "complete-undo-latest: first still completed on disk");
+    expect(diskHasText(dataDir, second), "complete-undo-latest: second incomplete on disk");
+
+    completeVisibleRow(&window, second);
+    bar = window.findChild<Snackbar *>();
+    expect(bar && bar->isVisible(), "complete-undo-timeout: toast after re-complete");
+    if (bar)
+        bar->dismiss();
+    waitHidden(bar, 400);
+    expect(!(bar && bar->isVisible()), "complete-undo-timeout: toast gone");
+    expect(!clickSnackbarButton(bar, completeUndoActionLabel()),
+           "complete-undo-timeout: 撤销 no longer available");
+    TodoRow *timedOut = findRowByTextAny(&window, second);
+    expect(timedOut && timedOut->item().completed,
+           "complete-undo-timeout: item stays complete");
+    expect(!diskHasText(dataDir, second),
+           "complete-undo-timeout: completed remains on disk");
+
+    if (g_failed == before)
+        pass("window: only latest complete toggle is undoable; timeout drops undo (#92)");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -620,6 +793,8 @@ int main(int argc, char *argv[])
     testHiddenWindowPomodoroDoesNotRaise();
     testVisibleWindowPomodoroStillShowsToast();
     testHiddenWindowTrayStandingStatus();
+    testCompleteUndoToastHappyPath();
+    testCompleteUndoToastLatestOnlyAndTimeout();
 
     if (g_failed != 0) {
         std::fprintf(stderr, "%d quick-add window assertion(s) failed\n", g_failed);
