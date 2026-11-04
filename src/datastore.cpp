@@ -14,6 +14,7 @@
 #include <QSaveFile>
 #include <QSet>
 #include <QUuid>
+#include <QVector>
 #include <utility>
 #include <functional>
 
@@ -34,6 +35,66 @@ QDateTime parseTimestamp(const QString &text)
 QString nowText()
 {
     return QDateTime::currentDateTime().toString(Qt::ISODateWithMs);
+}
+
+struct TodoFileRead {
+    QVector<TodoItem> items;
+    int invalidCount = 0;
+    QString error;
+    bool ok = false;
+};
+
+TodoFileRead readTodoFile(const QString &filePath)
+{
+    TodoFileRead out;
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        out.error = file.errorString();
+        return out;
+    }
+    const QByteArray bytes = file.readAll();
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(bytes, &parseError);
+    if (parseError.error != QJsonParseError::NoError) {
+        out.error = parseError.errorString();
+        return out;
+    }
+    if (!doc.isObject()) {
+        out.error = QStringLiteral("根节点不是对象");
+        return out;
+    }
+    const QJsonObject root = doc.object();
+    const QJsonValue arrayValue = root.value(QStringLiteral("todos"));
+    if (!arrayValue.isArray()) {
+        out.error = QStringLiteral("todos 字段缺失或类型错误");
+        return out;
+    }
+    const int schema = root.value(QStringLiteral("schemaVersion")).toInt(kSchemaVersion);
+    const QJsonArray array = arrayValue.toArray();
+    out.items.reserve(array.size());
+    for (const QJsonValue &value : array) {
+        if (!value.isObject()) {
+            ++out.invalidCount;
+            continue;
+        }
+        bool itemOk = false;
+        const TodoItem item = TodoItem::fromJson(value.toObject(), &itemOk);
+        if (itemOk)
+            out.items.append(item);
+        else
+            ++out.invalidCount;
+    }
+    if (schema > kSchemaVersion)
+        out.error = QStringLiteral("数据版本 %1 高于当前支持的 %2").arg(schema).arg(kSchemaVersion);
+    out.ok = true;
+    return out;
+}
+
+bool todoBackupReadable(const QString &backupPath)
+{
+    if (!QFileInfo::exists(backupPath))
+        return false;
+    return readTodoFile(backupPath).ok;
 }
 
 } // namespace
@@ -74,6 +135,11 @@ QString DataStore::resolveDataDir() const
 QString DataStore::todosPath() const
 {
     return QDir(m_dataDir).filePath(QStringLiteral("todos.json"));
+}
+
+QString DataStore::todoBackupPath() const
+{
+    return todosPath() + QStringLiteral(".bak");
 }
 
 QString DataStore::settingsPath() const
@@ -320,8 +386,18 @@ bool DataStore::markReminderFired(const QString &id, const QDateTime &when)
     return false;
 }
 
+bool DataStore::rejectTodosWrite()
+{
+    if (!m_todosLoadFailed)
+        return false;
+    emit errorOccurred(QStringLiteral("待办数据损坏，当前为只读。"));
+    return true;
+}
+
 QString DataStore::addTodo(const QString &text, QDate dueDate)
 {
+    if (rejectTodosWrite())
+        return QString();
     const QString trimmed = text.trimmed();
     if (trimmed.isEmpty())
         return QString();
@@ -340,6 +416,8 @@ QString DataStore::addTodo(const QString &text, QDate dueDate)
 
 bool DataStore::updateText(const QString &id, const QString &text)
 {
+    if (rejectTodosWrite())
+        return false;
     const QString trimmed = text.trimmed();
     if (trimmed.isEmpty())
         return false;
@@ -360,6 +438,8 @@ bool DataStore::updateText(const QString &id, const QString &text)
 
 bool DataStore::updateDue(const QString &id, QDate dueDate)
 {
+    if (rejectTodosWrite())
+        return false;
     for (TodoItem &item : m_todos) {
         if (item.id != id)
             continue;
@@ -382,6 +462,8 @@ bool DataStore::setCompleted(const QString &id, bool completed)
 
 bool DataStore::setCompleted(const QString &id, bool completed, QDateTime *completedAt)
 {
+    if (rejectTodosWrite())
+        return false;
     for (TodoItem &item : m_todos) {
         if (item.id != id)
             continue;
@@ -405,6 +487,8 @@ bool DataStore::setCompleted(const QString &id, bool completed, QDateTime *compl
 
 bool DataStore::setTodoPinned(const QString &id, bool pinned)
 {
+    if (rejectTodosWrite())
+        return false;
     if (id.isEmpty())
         return false;
     for (TodoItem &item : m_todos) {
@@ -424,6 +508,8 @@ bool DataStore::setTodoPinned(const QString &id, bool pinned)
 
 bool DataStore::removeTodo(const QString &id, TodoItem *removed, int *removedIndex)
 {
+    if (rejectTodosWrite())
+        return false;
     for (int i = 0; i < m_todos.size(); ++i) {
         if (m_todos.at(i).id != id)
             continue;
@@ -441,6 +527,8 @@ bool DataStore::removeTodo(const QString &id, TodoItem *removed, int *removedInd
 
 bool DataStore::restoreTodo(const TodoItem &item, int index)
 {
+    if (rejectTodosWrite())
+        return false;
     if (item.id.isEmpty() || item.text.trimmed().isEmpty())
         return false;
     for (const TodoItem &existing : m_todos) {
@@ -559,6 +647,8 @@ bool DataStore::isCompletedOlderThan(const TodoItem &item, int days, const QDate
 
 int DataStore::removeCompletedMatching(const std::function<bool(const TodoItem &)> &pred)
 {
+    if (rejectTodosWrite())
+        return 0;
     int removed = 0;
     for (int i = m_todos.size() - 1; i >= 0; --i) {
         const TodoItem &item = m_todos.at(i);
@@ -628,6 +718,8 @@ bool DataStore::writeArchiveFile(const QJsonArray &archived, QString *error)
 
 int DataStore::archiveThenRemoveMatching(const std::function<bool(const TodoItem &)> &pred)
 {
+    if (rejectTodosWrite())
+        return 0;
     QVector<TodoItem> matched;
     matched.reserve(m_todos.size());
     for (const TodoItem &item : std::as_const(m_todos)) {
@@ -722,6 +814,8 @@ QVector<ArchivedEntry> DataStore::listArchived() const
 
 int DataStore::importArchivedEntries(const QVector<int> &indices)
 {
+    if (rejectTodosWrite())
+        return 0;
     if (indices.isEmpty())
         return 0;
 
@@ -943,6 +1037,8 @@ void DataStore::setWindowState(const QRect &rect, const QString &screenName, int
 
 void DataStore::scheduleTodosSave(int delayMs)
 {
+    if (m_todosLoadFailed)
+        return;
     m_todosDirty = true;
     if (delayMs <= 0) {
         m_todoSaveTimer.stop();
@@ -988,7 +1084,7 @@ void DataStore::schedulePomodoroStatsSave(int delayMs)
 void DataStore::saveTodosNow()
 {
     m_todoSaveTimer.stop();
-    if (!m_todosDirty)
+    if (m_todosLoadFailed || !m_todosDirty)
         return;
     QJsonArray array;
     for (const TodoItem &item : std::as_const(m_todos))
@@ -1147,84 +1243,75 @@ bool DataStore::writeJson(const QString &path, const QJsonObject &root, QString 
 void DataStore::loadTodos()
 {
     const QString path = todosPath();
+    m_todosLoadFailed = false;
+    m_todoBackupAvailable = false;
+    m_todoLoadError.clear();
     if (!QFileInfo::exists(path)) {
         m_todos.clear();
         return;
     }
 
-    auto readTodoFile = [](const QString &filePath, QVector<TodoItem> *items,
-                           int *invalidCount, QString *why) {
-        QFile file(filePath);
-        if (!file.open(QIODevice::ReadOnly)) {
-            if (why)
-                *why = file.errorString();
-            return false;
-        }
-        const QByteArray bytes = file.readAll();
-        QJsonParseError parseError;
-        const QJsonDocument doc = QJsonDocument::fromJson(bytes, &parseError);
-        if (parseError.error != QJsonParseError::NoError) {
-            if (why)
-                *why = parseError.errorString();
-            return false;
-        }
-        if (!doc.isObject()) {
-            if (why)
-                *why = QStringLiteral("根节点不是对象");
-            return false;
-        }
-        const QJsonObject root = doc.object();
-        const QJsonValue arrayValue = root.value(QStringLiteral("todos"));
-        if (!arrayValue.isArray()) {
-            if (why)
-                *why = QStringLiteral("todos 字段缺失或类型错误");
-            return false;
-        }
-        const int schema = root.value(QStringLiteral("schemaVersion")).toInt(kSchemaVersion);
-        items->clear();
-        int invalid = 0;
-        const QJsonArray array = arrayValue.toArray();
-        items->reserve(array.size());
-        for (const QJsonValue &value : array) {
-            if (!value.isObject()) {
-                ++invalid;
-                continue;
-            }
-            bool ok = false;
-            const TodoItem item = TodoItem::fromJson(value.toObject(), &ok);
-            if (ok)
-                items->append(item);
-            else
-                ++invalid;
-        }
-        if (invalidCount)
-            *invalidCount = invalid;
-        if (schema > kSchemaVersion && why)
-            *why = QStringLiteral("数据版本 %1 高于当前支持的 %2").arg(schema).arg(kSchemaVersion);
-        return true;
-    };
-
-    QVector<TodoItem> items;
-    int invalidCount = 0;
-    QString problem;
-    if (readTodoFile(path, &items, &invalidCount, &problem)) {
-        m_todos = items;
-        if (invalidCount > 0) {
-            addNotice(QStringLiteral("有 %1 条待办格式异常，已安全跳过并保留原文件。").arg(invalidCount));
+    const TodoFileRead parsed = readTodoFile(path);
+    if (parsed.ok) {
+        m_todos = parsed.items;
+        if (parsed.invalidCount > 0) {
+            addNotice(QStringLiteral("有 %1 条待办格式异常，已安全跳过并保留原文件。")
+                          .arg(parsed.invalidCount));
         }
         return;
     }
 
-    addNotice(QStringLiteral("待办数据读取失败（%1），正在尝试备份。").arg(problem));
-    preserveCorruptFile(path);
-    QString backupWarning;
-    if (reloadTodoBackup(&backupWarning)) {
-        addNotice(backupWarning);
-        scheduleTodosSave(0);
+    // #107: do not silently restore or write an empty primary over a bad file.
+    m_todos.clear();
+    m_todosLoadFailed = true;
+    m_todoLoadError = parsed.error;
+    m_todoBackupAvailable = todoBackupReadable(todoBackupPath());
+    if (m_todoBackupAvailable) {
+        addNotice(QStringLiteral("待办数据读取失败（%1）。发现可读备份，等待确认是否恢复。")
+                      .arg(parsed.error));
     } else {
-        m_todos.clear();
-        scheduleTodosSave(0);
+        addNotice(QStringLiteral("待办数据读取失败（%1），且没有可用备份。当前列表为空且不会覆盖原文件。")
+                      .arg(parsed.error));
     }
+}
+
+bool DataStore::restoreTodosFromBackup()
+{
+    if (!m_todoBackupAvailable)
+        return false;
+
+    const QString primary = todosPath();
+    const QString backup = todoBackupPath();
+    const TodoFileRead parsed = readTodoFile(backup);
+    if (!parsed.ok) {
+        m_todoBackupAvailable = false;
+        const QString message = QStringLiteral("备份也无法读取，未覆盖主文件。");
+        addNotice(message);
+        emit errorOccurred(message);
+        return false;
+    }
+
+    if (QFileInfo::exists(primary))
+        preserveCorruptFile(primary);
+    if (QFileInfo::exists(primary) && !QFile::remove(primary)) {
+        const QString message = QStringLiteral("无法替换损坏的待办文件。");
+        addNotice(message);
+        emit errorOccurred(message);
+        return false;
+    }
+    if (!QFile::copy(backup, primary)) {
+        const QString message = QStringLiteral("无法用备份覆盖主文件。");
+        addNotice(message);
+        emit errorOccurred(message);
+        return false;
+    }
+
+    loadTodos();
+    if (m_todosLoadFailed)
+        return false;
+    addNotice(QStringLiteral("已从备份恢复 %1 条待办。").arg(m_todos.size()));
+    emit todosChanged();
+    return true;
 }
 
 void DataStore::loadSettings()
@@ -1478,38 +1565,6 @@ void DataStore::preserveCorruptFile(const QString &path)
         return;
     }
     addNotice(QStringLiteral("无法备份损坏的数据文件，请手动检查 %1").arg(QDir::toNativeSeparators(path)));
-}
-
-bool DataStore::reloadTodoBackup(QString *warning)
-{
-    const QString backup = todosPath() + QStringLiteral(".bak");
-    if (!QFileInfo::exists(backup))
-        return false;
-
-    QFile file(backup);
-    if (!file.open(QIODevice::ReadOnly))
-        return false;
-    QJsonParseError parseError;
-    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
-    if (parseError.error != QJsonParseError::NoError || !doc.isObject())
-        return false;
-    const QJsonValue arrayValue = doc.object().value(QStringLiteral("todos"));
-    if (!arrayValue.isArray())
-        return false;
-
-    QVector<TodoItem> items;
-    for (const QJsonValue &value : arrayValue.toArray()) {
-        if (!value.isObject())
-            continue;
-        bool ok = false;
-        const TodoItem item = TodoItem::fromJson(value.toObject(), &ok);
-        if (ok)
-            items.append(item);
-    }
-    m_todos = items;
-    if (warning)
-        *warning = QStringLiteral("已从上一份备份恢复 %1 条待办。").arg(items.size());
-    return true;
 }
 
 bool DataStore::reloadSettingsBackup(QString *warning)
