@@ -12,6 +12,7 @@
 #include <QDir>
 #include <QEvent>
 #include <QFile>
+#include <QKeyEvent>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -505,6 +506,102 @@ void testVisibleWindowReminderStillShowsBanner()
         pass("visible window reminder banner unchanged (#94)");
 }
 
+void testHiddenWindowTrayStandingStatus()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "tray-stand: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    const QDate today = QDate::currentDate();
+    {
+        DataStore store;
+        expect(store.load(), "tray-stand: seed load");
+        expect(!store.addTodo(QStringLiteral("今天甲"), today).isEmpty(), "tray-stand: today a");
+        expect(!store.addTodo(QStringLiteral("今天乙"), today).isEmpty(), "tray-stand: today b");
+        expect(!store.addTodo(QStringLiteral("昨天未办"), today.addDays(-1)).isEmpty(),
+               "tray-stand: overdue");
+        expect(!store.addTodo(QStringLiteral("无日期不计入"), QDate()).isEmpty(),
+               "tray-stand: nodate");
+        expect(store.flush(), "tray-stand: flush seed");
+    }
+
+    MainWindow window;
+    window.show();
+    pump();
+    QTimer::singleShot(0, [] {});
+    pump();
+    window.hide();
+    pump();
+    expect(!window.isVisible(), "tray-stand: hidden like tray");
+
+    auto *status = window.findChild<QAction *>(QStringLiteral("trayStatus"));
+    expect(status != nullptr, "tray-stand: menu status action");
+    if (!status)
+        return;
+    expect(!status->isEnabled(), "tray-stand: status is not a command");
+    expect(status->text() == QStringLiteral("今日未办 2 · 逾期 1"),
+           "tray-stand: seed 2 today + 1 overdue");
+
+    TodoRow *todayRow = findRowByText(&window, QStringLiteral("今天甲"));
+    expect(todayRow != nullptr, "tray-stand: found today row");
+    if (!todayRow)
+        return;
+    QKeyEvent space(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier);
+    QApplication::sendEvent(todayRow, &space);
+    pump();
+    QTimer::singleShot(0, [] {});
+    pump();
+    expect(!window.isVisible(), "tray-stand: complete does not raise");
+    expect(status->text() == QStringLiteral("今日未办 1 · 逾期 1"),
+           "tray-stand: complete today updates menu");
+
+    auto *quickAdd = window.findChild<QAction *>(QStringLiteral("trayQuickAdd"));
+    expect(quickAdd != nullptr, "tray-stand: tray 快速添加");
+    if (!quickAdd)
+        return;
+    quickAdd->trigger();
+    pump();
+    QTimer::singleShot(0, [] {});
+    pump();
+    QuickAddPopup *popup = findPopup();
+    expect(popup != nullptr && popup->isVisible(), "tray-stand: popup opens while hidden");
+    if (!popup)
+        return;
+    popup->setText(QStringLiteral("托盘再加一条"));
+    popup->confirm();
+    pump();
+    QTimer::singleShot(0, [] {});
+    pump();
+    expect(!window.isVisible(), "tray-stand: still hidden after add");
+    expect(status->text() == QStringLiteral("今日未办 2 · 逾期 1"),
+           "tray-stand: add today updates menu");
+    expect(diskHasText(dataDir, QStringLiteral("托盘再加一条")),
+           "tray-stand: new today item on disk");
+
+    window.show();
+    pump();
+    QTimer::singleShot(0, [] {});
+    pump();
+    int todayOpen = 0;
+    int overdue = 0;
+    for (TodoRow *row : window.findChildren<TodoRow *>()) {
+        if (!row || row->item().completed)
+            continue;
+        if (row->item().isOverdue(today))
+            ++overdue;
+        else if (row->item().dueDate == today)
+            ++todayOpen;
+    }
+    expect(todayOpen == 2 && overdue == 1, "tray-stand: list matches 今日未办 2 · 逾期 1");
+    expect(status->text() == formatStandingTodoStatus({todayOpen, overdue}),
+           "tray-stand: menu still matches list counts");
+
+    if (g_failed == before)
+        pass("hidden window tray standing status matches list after complete/add");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -522,6 +619,7 @@ int main(int argc, char *argv[])
     testVisibleWindowReminderStillShowsBanner();
     testHiddenWindowPomodoroDoesNotRaise();
     testVisibleWindowPomodoroStillShowsToast();
+    testHiddenWindowTrayStandingStatus();
 
     if (g_failed != 0) {
         std::fprintf(stderr, "%d quick-add window assertion(s) failed\n", g_failed);

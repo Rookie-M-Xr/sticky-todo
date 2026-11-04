@@ -719,6 +719,11 @@ void MainWindow::buildTray()
     m_trayMenu->setAttribute(Qt::WA_TranslucentBackground);
     m_trayMenu->setAttribute(Qt::WA_StyledBackground);
     m_trayMenu->installEventFilter(this);
+    m_trayStatusAction = m_trayMenu->addAction(formatStandingTodoStatus(StandingTodoCounts{}));
+    m_trayStatusAction->setObjectName(QStringLiteral("trayStatus"));
+    // Status, not a command — disabled so it cannot be triggered.
+    m_trayStatusAction->setEnabled(false);
+    m_trayMenu->addSeparator();
     m_trayShowAction = m_trayMenu->addAction(QStringLiteral("显示便签"));
     m_trayHideAction = m_trayMenu->addAction(QStringLiteral("隐藏便签"));
     m_trayMenu->addSeparator();
@@ -975,15 +980,17 @@ QImage MainWindow::trayImage() const
     return image;
 }
 
+QString MainWindow::standingStatusText() const
+{
+    const QDate today = QDate::currentDate();
+    if (!m_store)
+        return formatStandingTodoStatus(StandingTodoCounts{});
+    return formatStandingTodoStatus(m_store->todos(), today);
+}
+
 QString MainWindow::trayTipText() const
 {
-    int pending = 0;
-    if (m_store) {
-        for (const TodoItem &item : m_store->todos()) {
-            if (!item.completed)
-                ++pending;
-        }
-    }
+    const QString standing = standingStatusText();
     if (!m_pomodoroId.isEmpty() && m_store) {
         QString label;
         if (const TodoItem *item = m_store->findTodo(m_pomodoroId))
@@ -991,10 +998,10 @@ QString MainWindow::trayTipText() const
         if (label.isEmpty())
             label = QStringLiteral("待办");
         const QString phase = m_pomodoroPaused ? QStringLiteral("暂停") : QStringLiteral("专注");
-        return QStringLiteral("Sticky Todo · %1「%2」%3\n单击显示，右键可退出")
-            .arg(phase, label, formatPomodoroClock(pomodoroSecondsLeft()));
+        return QStringLiteral("Sticky Todo · %1「%2」%3\n%4")
+            .arg(phase, label, formatPomodoroClock(pomodoroSecondsLeft()), standing);
     }
-    return QStringLiteral("Sticky Todo · %1 项待办\n单击显示，右键可退出").arg(pending);
+    return QStringLiteral("Sticky Todo · %1\n单击显示，右键可退出").arg(standing);
 }
 
 void MainWindow::ensureTrayIcon()
@@ -1583,6 +1590,9 @@ void MainWindow::updatePinButton()
 
 void MainWindow::updateTrayState()
 {
+    const QString standing = standingStatusText();
+    if (m_trayStatusAction)
+        m_trayStatusAction->setText(standing);
     if (m_trayInstalled)
         WinUtils::updateTrayTip(this, trayTipText());
 
