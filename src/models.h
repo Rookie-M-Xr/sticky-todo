@@ -143,6 +143,18 @@ bool defaultGroupExpanded(GroupId id);
 // new incomplete item lands in GroupId::Today — not NoDate / Later.
 QDate defaultNewTodoDue(QDate today = QDate());
 
+// #115: "today" is the machine local calendar date (QDate::currentDate /
+// QDateTime::currentDateTime). There is no UTC-day rule.
+// A resident process cannot wait on one ~24h QTimer — sleep/wake and
+// system-clock changes never fire it. Recheck at least this often; when
+// midnight is closer, wait only until local 00:00:05.
+constexpr int kDatePollMaxMsecs = 15 * 1000;
+constexpr int kMidnightSlackSecs = 5;
+qint64 midnightRefreshMsecs(const QDateTime &now = QDateTime());
+// Composer due was the previous default "today" → follow the new day.
+// Explicit other dates (including no-date) stay put. Ignores leftover draft text.
+QDate rolledComposerDue(QDate previousToday, QDate today, QDate composerDue);
+
 struct TodoGroup {
     GroupId id = GroupId::Today;
     QVector<TodoItem> items;

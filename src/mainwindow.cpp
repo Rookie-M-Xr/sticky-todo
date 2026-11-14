@@ -1203,6 +1203,7 @@ void MainWindow::ensureVisible()
 void MainWindow::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
+    refreshDateIfNeeded();
     if (m_hiddenReminderBar)
         m_hiddenReminderBar->hide();
     applyCardGeometry();
@@ -1760,11 +1761,7 @@ void MainWindow::scheduleMidnightRefresh()
 {
     if (!m_dateTimer)
         return;
-    const QDateTime now = QDateTime::currentDateTime();
-    const QDateTime next(QDate::currentDate().addDays(1), QTime(0, 0, 5));
-    const qint64 msecs = qBound<qint64>(1000, now.msecsTo(next),
-                                       24LL * 60 * 60 * 1000);
-    m_dateTimer->start(static_cast<int>(msecs));
+    m_dateTimer->start(static_cast<int>(midnightRefreshMsecs()));
 }
 
 void MainWindow::refreshDateIfNeeded()
@@ -1775,12 +1772,20 @@ void MainWindow::refreshDateIfNeeded()
 
     const QDate previous = m_currentDate;
     m_currentDate = today;
-    if (m_composer && m_composer->text().isEmpty() && m_composerDate
-        && m_composerDate->date() == previous) {
-        m_composerDate->setDate(today);
-        m_store->setDraftDue(today);
+    if (m_composerDate) {
+        const QDate rolled = rolledComposerDue(previous, today, m_composerDate->date());
+        // setDate also refreshes relative "今天"/"昨天" labels after the day moves.
+        m_composerDate->setDate(rolled);
+        if (m_store)
+            m_store->setDraftDue(rolled);
     }
     refreshTodos();
+    if (m_dailyVisible && m_dailyPage)
+        m_dailyPage->refresh();
+    if (m_weeklyVisible && m_weeklyPage)
+        m_weeklyPage->refresh();
+    if (m_monthlyVisible && m_monthlyPage)
+        m_monthlyPage->refresh();
 }
 
 void MainWindow::refreshTodos()
@@ -2798,6 +2803,7 @@ void MainWindow::handleQuickAddAccepted(const QString &text)
 {
     if (!m_store)
         return;
+    refreshDateIfNeeded();
     const QString id = m_store->addTodo(text, defaultNewTodoDue());
     if (id.isEmpty()) {
         const QString fail = QStringLiteral("这条待办未能保存，请检查数据目录。");
@@ -2816,6 +2822,7 @@ void MainWindow::handleQuickAddAccepted(const QString &text)
 
 void MainWindow::submitComposer()
 {
+    refreshDateIfNeeded();
     if (!m_composer)
         return;
     const QString text = m_composer->text().trimmed();
@@ -2841,6 +2848,7 @@ void MainWindow::submitComposer()
 
 void MainWindow::focusComposer()
 {
+    refreshDateIfNeeded();
     if (m_settingsVisible)
         closeSettingsPage();
     if (m_collapsed)
