@@ -52,6 +52,66 @@ struct MainWindowTestAccess {
     {
         return window.m_todoLoadBanner && window.m_todoLoadBanner->isVisible();
     }
+
+    static QDate currentDate(const MainWindow &window) { return window.m_currentDate; }
+
+    static QDate composerDate(const MainWindow &window)
+    {
+        return window.m_composerDate ? window.m_composerDate->date() : QDate();
+    }
+
+    static QString subtitle(const MainWindow &window)
+    {
+        return window.m_subtitleLabel ? window.m_subtitleLabel->text() : QString();
+    }
+
+    static bool dateTimerActive(const MainWindow &window)
+    {
+        return window.m_dateTimer && window.m_dateTimer->isActive();
+    }
+
+    static int dateTimerInterval(const MainWindow &window)
+    {
+        return window.m_dateTimer ? window.m_dateTimer->interval() : -1;
+    }
+
+    static void setComposerText(MainWindow &window, const QString &text)
+    {
+        if (window.m_composer)
+            window.m_composer->setText(text);
+    }
+
+    static void setComposerDate(MainWindow &window, QDate date)
+    {
+        if (window.m_composerDate)
+            window.m_composerDate->setDate(date);
+        if (window.m_store)
+            window.m_store->setDraftDue(date);
+    }
+
+    static void applyStaleCalendarDay(MainWindow &window, QDate staleDay)
+    {
+        if (window.m_refreshTimer)
+            window.m_refreshTimer->stop();
+        if (window.m_dateTimer)
+            window.m_dateTimer->stop();
+        window.m_currentDate = staleDay;
+        if (window.m_composerDate)
+            window.m_composerDate->setDate(staleDay);
+        if (window.m_store)
+            window.m_store->setDraftDue(staleDay);
+        if (window.m_todosView && window.m_store) {
+            window.m_todosView->refresh(
+                buildGroups(window.m_store->todos(), staleDay, window.m_searchQuery),
+                window.m_searchQuery);
+        }
+        window.updateHeader();
+        window.updateTrayState();
+    }
+
+    static void refreshDateIfNeeded(MainWindow &window) { window.refreshDateIfNeeded(); }
+
+    static void submitComposer(MainWindow &window) { window.submitComposer(); }
 };
 
 namespace {
@@ -1034,6 +1094,100 @@ void testWindowCorruptWithoutBak()
         pass("window: no bak keeps explicit failure without silent empty write");
 }
 
+void testDateRolloverWithoutRestart()
+{
+    const int before = g_failed;
+    const QString dataDir = makeDataDir();
+    expect(!dataDir.isEmpty(), "rollover: data dir");
+    if (dataDir.isEmpty())
+        return;
+
+    const QDate today = QDate::currentDate();
+    const QDate yesterday = today.addDays(-1);
+    {
+        DataStore store;
+        expect(store.load(), "rollover: seed load");
+        expect(!store.addTodo(QStringLiteral("昨天的待办"), yesterday).isEmpty(),
+               "rollover: seed yesterday");
+        expect(!store.addTodo(QStringLiteral("今天的待办"), today).isEmpty(),
+               "rollover: seed today");
+        expect(store.flush(), "rollover: seed flush");
+    }
+
+    MainWindow window;
+    window.show();
+    pump();
+    QTimer::singleShot(0, [] {});
+    pump();
+
+    expect(MainWindowTestAccess::dateTimerActive(window), "rollover: date timer armed");
+    expect(MainWindowTestAccess::dateTimerInterval(window) >= 1000
+               && MainWindowTestAccess::dateTimerInterval(window) <= kDatePollMaxMsecs,
+           "rollover: date timer is a short poll, not a ~24h wait");
+    expect(MainWindowTestAccess::currentDate(window) == today, "rollover: starts on local today");
+    expect(findSection(&window, GroupId::Today) != nullptr, "rollover: Today section at start");
+    expect(findRowByText(&window, QStringLiteral("今天的待办")) != nullptr,
+           "rollover: today's item mounted");
+
+    MainWindowTestAccess::applyStaleCalendarDay(window, yesterday);
+    pump();
+
+    expect(MainWindowTestAccess::currentDate(window) == yesterday,
+           "rollover: cache stuck on yesterday (resident overnight)");
+    expect(MainWindowTestAccess::composerDate(window) == yesterday,
+           "rollover: composer still defaults to yesterday");
+    expect(MainWindowTestAccess::subtitle(window).contains(dateHeadline(yesterday)),
+           "rollover: header still shows yesterday");
+    expect(findSection(&window, GroupId::Today) != nullptr
+               && findRowByText(findSection(&window, GroupId::Today),
+                                QStringLiteral("昨天的待办")) != nullptr,
+           "rollover: stale Today still holds yesterday's item");
+    expect(findSection(&window, GroupId::Tomorrow) != nullptr
+               && findRowByText(findSection(&window, GroupId::Tomorrow),
+                                QStringLiteral("今天的待办")) != nullptr,
+           "rollover: stale groups put real today in Tomorrow");
+
+    MainWindowTestAccess::setComposerText(window, QStringLiteral("  跨夜新建  "));
+    MainWindowTestAccess::submitComposer(window);
+    pump();
+    QTimer::singleShot(0, [] {});
+    pump();
+
+    expect(MainWindowTestAccess::currentDate(window) == today,
+           "rollover: submit refreshes local today without restart");
+    expect(MainWindowTestAccess::composerDate(window) == today,
+           "rollover: composer default follows new day (even with leftover draft)");
+    expect(MainWindowTestAccess::subtitle(window).contains(dateHeadline(today)),
+           "rollover: header follows new day");
+    expect(diskHasText(dataDir, QStringLiteral("跨夜新建")), "rollover: new todo written");
+    TodoRow *created = findRowByText(&window, QStringLiteral("跨夜新建"));
+    expect(created != nullptr && created->item().dueDate == today,
+           "rollover: new todo due is new local date, not yesterday");
+    expect(created && groupFor(created->item(), today) == GroupId::Today,
+           "rollover: new todo lands in Today");
+    expect(findSection(&window, GroupId::Today) != nullptr
+               && findRowByText(findSection(&window, GroupId::Today),
+                                QStringLiteral("今天的待办")) != nullptr,
+           "rollover: Today's section now holds the real today item");
+    expect(findSection(&window, GroupId::Overdue) != nullptr
+               && findRowByText(findSection(&window, GroupId::Overdue),
+                                QStringLiteral("昨天的待办")) != nullptr,
+           "rollover: yesterday's open item moved to Overdue");
+
+    const QDate later = today.addDays(3);
+    MainWindowTestAccess::applyStaleCalendarDay(window, yesterday);
+    MainWindowTestAccess::setComposerDate(window, later);
+    MainWindowTestAccess::refreshDateIfNeeded(window);
+    pump();
+    expect(MainWindowTestAccess::currentDate(window) == today,
+           "rollover: header still advances with an explicit later due");
+    expect(MainWindowTestAccess::composerDate(window) == later,
+           "rollover: explicit later due is not rewritten");
+
+    if (g_failed == before)
+        pass("date rollover without restart: header, groups, new todo due");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -1061,6 +1215,7 @@ int main(int argc, char *argv[])
     testWindowRestoreFromBak();
     testWindowRestoreDeclinedKeepsFailure();
     testWindowCorruptWithoutBak();
+    testDateRolloverWithoutRestart();
 
     if (g_failed != 0) {
         std::fprintf(stderr, "%d quick-add window assertion(s) failed\n", g_failed);

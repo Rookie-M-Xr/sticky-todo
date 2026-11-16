@@ -59,11 +59,14 @@ python .\test_datastore.py
 
 原因：工程/`dist` 目录若带 Low integrity 或「来自 Internet」区域标记，直接跑 exe 会继承**低完整性**；Windows 常拒绝托盘。Low 进程无法无 UAC 地抬到 Medium（已实测 WMI / 任务计划 / Explorer Shell 均失败）。程序会**降级继续运行**，并显示横幅，请改用 `Start StickyTodo.cmd`。
 
-`Start StickyTodo.cmd` 会启动 `%LOCALAPPDATA%\StickyTodo\runtime\StickyTodo.exe`（中等完整性副本），并传入：
+`Start StickyTodo.cmd` 按本包完整性选择启动映像，并传入：
 
 ```text
 --data-dir <本包目录>\config
 ```
+
+- 本包 exe **不是**低完整性：直接启动本目录当前 `StickyTodo.exe`（不会去跑 `%LOCALAPPDATA%\StickyTodo\runtime` 里一份过期副本）。
+- 本包是低完整性：每次用本包覆盖拷到 `%LOCALAPPDATA%\StickyTodo\runtime` 再启动该中等完整性副本。不会「runtime 已有 exe 就沿用」。
 
 请解压到有写权限的目录（勿装到 Program Files 等无写位置）；若便携 `config` 不可写，程序会回退到 `%LOCALAPPDATA%\StickyTodo\data` 并提示新旧路径。
 

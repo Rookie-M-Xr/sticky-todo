@@ -16,7 +16,7 @@
 辅助字段（建议一并记下，避免测错进程）：
 
 - 进程映像路径（`StickyTodo.exe` 的 Path，不要测到 `cmd.exe` / runtime 副本混用）
-- 启动方式：直接 exe + `--data-dir`，或 `Start StickyTodo.cmd`（会跑 `%LOCALAPPDATA%\StickyTodo\runtime\`）
+- 启动方式：直接 exe + `--data-dir`，或 `Start StickyTodo.cmd`（非 Low 跑本包当前 exe；Low 才覆盖拷到 `%LOCALAPPDATA%\StickyTodo\runtime\`）
 - 数据：空目录 vs User 真实 `config`
 - 构建：Release `-O2 -DNDEBUG`（`build.py`）还是调试器
 - 完整性：Medium（`Start StickyTodo.cmd`）还是 Low（横幅多一块 widget）
@@ -73,7 +73,7 @@ User（Asia/Shanghai 2026-11-02）：以前启动大约 **2–8 MB**，现在几
 
 - Win11 **进程**页「内存」= Active Private Working Set，**不是**详细信息「工作集」
 - `Private Bytes`（`PrivateMemorySize64`）≠ 「专用工作集」
-- 测到了 `Start StickyTodo.cmd` 的 `cmd.exe`，或 `LocalAppData\StickyTodo\runtime` 里一份旧 exe
+- 测到了 `Start StickyTodo.cmd` 的 `cmd.exe`（cmd 仍会再拉起 exe；看映像路径）
 - 启动后立刻读（托盘还在 400ms 重试，字体/样式还在 polish）
 
 **怎么证伪：** 劳模脚本同时打出映像路径和多列；User 说的「10MB+」必须能对上其中 **一列**，v0.1.5 用同一列。
@@ -141,7 +141,7 @@ v0.1.2 起。空数据几乎为 0；待办多时线性涨。测 User 真数据�
    - A：GitHub Release **v0.1.5** zip 里的 `StickyTodo.exe`（SHA `e8b819e`）
    - B：当前要测的 tip 用同一套 Qt 6.11.1 MinGW `build.py` 打出来的 exe（调查时 SHA `baed1fd`）
 3. 不要用混了 PATH 的「半套 DLL」。记录 `image_path`。
-4. 建议先 **不要**走 `Start StickyTodo.cmd`（避免测到旧 runtime）。确认口径后再加一条 cmd 启动。
+4. `Start StickyTodo.cmd` 在本包非 Low 时直接跑本目录当前 exe；Low 包每次覆盖拷 runtime。仍请核对任务管理器里的映像路径。
 5. 默认空闲 **15 秒**，鼠标不要放在窗口上（避免 tooltip #64 路径）。不要打开设置/汇报/右键菜单。
 6. 把脚本打印的 **工作集 / 专用工作集 / Private Bytes / 提交大小** 全部贴回；并写明 User 当时看的是哪一列。
 7. 可选第二轮：同一 exe + User 真实 `config`，看 H4/H9。

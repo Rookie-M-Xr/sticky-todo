@@ -198,6 +198,24 @@ QDate defaultNewTodoDue(QDate today)
     return today.isValid() ? today : QDate::currentDate();
 }
 
+qint64 midnightRefreshMsecs(const QDateTime &now)
+{
+    const QDateTime origin = now.isValid() ? now : QDateTime::currentDateTime();
+    if (!origin.isValid() || !origin.date().isValid())
+        return kDatePollMaxMsecs;
+    const QDateTime next(origin.date().addDays(1), QTime(0, 0, kMidnightSlackSecs));
+    return qBound(qint64(1000), origin.msecsTo(next), qint64(kDatePollMaxMsecs));
+}
+
+QDate rolledComposerDue(QDate previousToday, QDate today, QDate composerDue)
+{
+    if (!today.isValid())
+        today = QDate::currentDate();
+    if (previousToday.isValid() && composerDue.isValid() && composerDue == previousToday)
+        return today;
+    return composerDue;
+}
+
 bool defaultGroupExpanded(GroupId id)
 {
     return id != GroupId::PastCompleted;

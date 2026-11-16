@@ -229,8 +229,9 @@ def main() -> int:
         if file.is_file():
             strip_downloaded_mark(file)
 
-    # Start StickyTodo.cmd copies the package to a Medium-IL runtime under
-    # LocalAppData. Keep that copy current after each local build.
+    # Low-IL packages: Start StickyTodo.cmd overwrites a Medium-IL runtime
+    # under LocalAppData from this dist. Keep that copy current after each
+    # local build. Medium-IL packages are launched in place and skip runtime.
     install_medium_runtime(DIST)
 
     print()

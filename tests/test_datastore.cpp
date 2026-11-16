@@ -2325,6 +2325,84 @@ void testQuickAddMatchesComposerGrouping()
         pass("tray quick-add matches composer today/incomplete grouping");
 }
 
+void testDateRolloverHelpers()
+{
+    const int before = g_failed;
+    const QDate day1(2026, 11, 15);
+    const QDate day2(2026, 11, 16);
+
+    expect(rolledComposerDue(day1, day2, day1) == day2,
+           "roll: stale today default follows local calendar");
+    expect(rolledComposerDue(day1, day2, day1.addDays(3)) == day1.addDays(3),
+           "roll: explicit later date kept");
+    expect(!rolledComposerDue(day1, day2, QDate()).isValid(), "roll: no-date kept");
+    expect(rolledComposerDue(day1, day2, day1.addDays(-1)) == day1.addDays(-1),
+           "roll: older explicit date kept");
+    expect(rolledComposerDue(day2, day2, day1) == day1,
+           "roll: same cached day does not rewrite composer");
+    expect(rolledComposerDue(QDate(), day2, day1) == day1,
+           "roll: invalid previous does not rewrite");
+    expect(defaultNewTodoDue(day2) == day2, "roll: default due uses provided today");
+    expect(defaultNewTodoDue(QDate()) == QDate::currentDate(),
+           "roll: default due is live local currentDate");
+
+    TodoItem leftover;
+    leftover.id = QStringLiteral("old-today");
+    leftover.text = QStringLiteral("leftover");
+    leftover.dueDate = day1;
+    expect(groupFor(leftover, day1) == GroupId::Today, "roll: due day1 is Today on day1");
+    expect(groupFor(leftover, day2) == GroupId::Overdue, "roll: due day1 is Overdue on day2");
+
+    TodoItem fresh;
+    fresh.id = QStringLiteral("new-today");
+    fresh.text = QStringLiteral("fresh");
+    fresh.dueDate = day2;
+    expect(groupFor(fresh, day1) == GroupId::Tomorrow, "roll: due day2 is Tomorrow on day1");
+    expect(groupFor(fresh, day2) == GroupId::Today, "roll: due day2 is Today on day2");
+
+    expect(shortDueLabel(day1, day1) == QStringLiteral("今天"), "roll: label today on day1");
+    expect(shortDueLabel(day1, day2) == QStringLiteral("昨天"), "roll: label yesterday after midnight");
+    expect(shortDueLabel(day2, day2) == QStringLiteral("今天"), "roll: label today on day2");
+
+    const QVector<TodoItem> items = {leftover, fresh};
+    const QVector<TodoGroup> stale = buildGroups(items, day1);
+    const QVector<TodoGroup> live = buildGroups(items, day2);
+    auto groupHas = [](const QVector<TodoGroup> &groups, GroupId id, const QString &todoId) {
+        for (const TodoGroup &group : groups) {
+            if (group.id != id)
+                continue;
+            for (const TodoItem &item : group.items) {
+                if (item.id == todoId)
+                    return true;
+            }
+        }
+        return false;
+    };
+    expect(groupHas(stale, GroupId::Today, leftover.id), "roll: stale groups keep leftover in Today");
+    expect(groupHas(stale, GroupId::Tomorrow, fresh.id), "roll: stale groups put new day in Tomorrow");
+    expect(groupHas(live, GroupId::Overdue, leftover.id), "roll: live groups move leftover to Overdue");
+    expect(groupHas(live, GroupId::Today, fresh.id), "roll: live groups put new day in Today");
+
+    const QDateTime evening(day1, QTime(20, 0));
+    expect(midnightRefreshMsecs(evening) == kDatePollMaxMsecs,
+           "roll: far from midnight is capped (not ~24h)");
+    const QDateTime almost(day1, QTime(23, 59, 55));
+    expect(midnightRefreshMsecs(almost) == 10000,
+           "roll: 23:59:55 waits until local 00:00:05");
+    const QDateTime justAfter(day2, QTime(0, 0, 2));
+    expect(midnightRefreshMsecs(justAfter) == kDatePollMaxMsecs,
+           "roll: just after midnight still polls, does not wait a day");
+    expect(midnightRefreshMsecs(QDateTime()) >= 1000
+               && midnightRefreshMsecs(QDateTime()) <= kDatePollMaxMsecs,
+           "roll: invalid now falls back to live local clock");
+    expect(midnightRefreshMsecs(QDateTime::currentDateTime()) >= 1000
+               && midnightRefreshMsecs(QDateTime::currentDateTime()) <= kDatePollMaxMsecs,
+           "roll: live timer never exceeds poll cap");
+
+    if (g_failed == before)
+        pass("date rollover helpers: composer due, groups, poll cap");
+}
+
 void testCompletedSectionGrouping()
 {
     const int before = g_failed;
@@ -2740,6 +2818,7 @@ int main(int argc, char *argv[])
     testReminderActiveWindowAndInterval();
     testReminderWindowPersistAndLegacyMigrate();
     testQuickAddMatchesComposerGrouping();
+    testDateRolloverHelpers();
     testCompletedSectionGrouping();
     testCompletedSectionDefaultCollapsed();
     testLastCompleteUndoSlotAndLatestOnly();
