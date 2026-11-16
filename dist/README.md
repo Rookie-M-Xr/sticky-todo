@@ -9,8 +9,9 @@
 `Start StickyTodo.cmd` 会：
 
 1. 尽量解除本目录文件的 Internet 标记；
-2. 把程序拷到 `%LOCALAPPDATA%\StickyTodo\runtime`（中等完整性）再启动；
-3. 用 `--data-dir` 把数据固定到本包的 `config`。
+2. 用 `--data-dir` 把数据固定到本包的 `config`；
+3. 若本包 exe **不是**低完整性：直接启动**本目录当前** `StickyTodo.exe`（不会去跑 `%LOCALAPPDATA%\StickyTodo\runtime` 里一份过期副本）；
+4. 若本包是低完整性：每次都用本包覆盖拷到 `%LOCALAPPDATA%\StickyTodo\runtime`（中等完整性）再启动。不会「runtime 里已有 exe 就沿用旧的」。
 
 - 系统要求：Windows 10 / 11 64 位
 - 请解压到有写权限的目录（不要放在 `Program Files` 等受保护位置）；装到无写目录时应用会回退到 `%LOCALAPPDATA%\StickyTodo\data` 并提示。
